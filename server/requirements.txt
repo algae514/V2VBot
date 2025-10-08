@@ -1,0 +1,9 @@
+fastapi>=0.111.0
+uvicorn[standard]>=0.30.0
+aiortc>=1.7.0
+pydantic>=2.7.0
+aiofiles>=23.2.1
+numpy>=1.26.0
+onnxruntime>=1.18.0
+soundfile>=0.12.1
+opuslib>=3.0.1

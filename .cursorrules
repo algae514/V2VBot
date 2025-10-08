@@ -1,0 +1,31 @@
+# Cursor Project Rules for V2VBot
+
+## Editing Conventions
+- Do not reformat unrelated code. Preserve existing indentation and style.
+- Use small, focused edits; one concern per change.
+- Add imports and dependencies explicitly when needed.
+- For existing code references in replies, use code references with start:end:filepath per project docs.
+- For new code proposals in replies, use fenced markdown with a language tag.
+
+## Architecture & Performance
+- Keep audio at 16 kHz mono end-to-end; Opus 20 ms frames.
+- Maintain streaming pipelines: STT partials, LLM partials, TTS chunked output.
+- Ensure barge-in support: mic VAD cancels TTS and LLM quickly.
+- Avoid per-frame allocations; reuse buffers; pre-warm models.
+
+## Python Backend
+- Framework: FastAPI + aiortc + asyncio; prefer uvloop.
+- Structure: follow `docs/folder-structure.md`.
+- Typing for public APIs; meaningful variable names.
+
+## Frontend
+- Minimal UI with WebRTC media and a DataChannel; avoid heavy frameworks.
+- Respect constraints in `docs/architecture-rules.md`.
+
+## Docs Discipline
+- If an edit changes architecture/behavior materially, update `docs/` in the same PR.
+
+## Security & Secrets
+- Do not hardcode secrets; use environment variables.
+- Keep logs free of PII; redact transcripts if persisted.
+

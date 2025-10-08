@@ -1,0 +1,33 @@
+<!doctype html>
+<html>
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1" />
+	<title>V2VBot</title>
+	<style>
+		body { font-family: system-ui, Arial, sans-serif; margin: 24px; }
+		#start, #startFile { font-size: 18px; padding: 10px 16px; }
+		#log { white-space: pre-wrap; background: #f5f5f5; padding: 12px; border-radius: 6px; }
+	</style>
+</head>
+<body>
+	<h1>V2VBot</h1>
+	<div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+		<button id="start">Start (Mic)</button>
+		<input type="file" id="fileInput" accept="audio/*" />
+		<button id="startFile">Start (From File)</button>
+	</div>
+	<div id="status"></div>
+	<h3>Transcript</h3>
+	<div id="transcript"></div>
+	<h3>Log</h3>
+	<div id="log"></div>
+	<script>
+		window.addEventListener('error', (e) => {
+			const log = document.getElementById('log');
+			log.textContent += 'error: ' + (e.message || e.error) + '\n';
+		});
+	</script>
+	<script src="/assets/main.js"></script>
+</body>
+</html>
