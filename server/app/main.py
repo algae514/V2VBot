@@ -127,7 +127,7 @@ async def offer(request: Request) -> JSONResponse:
 				try:
 					while True:
 						frame = await track.recv()
-						pcm = frame.to_ndarray(format="s16").astype(np.int16)
+						pcm = frame.to_ndarray().astype(np.int16)
 						pcm = pcm.reshape(-1)
 						pcm_f32 = (pcm.astype(np.float32) / 32768.0)
 						for i in range(0, len(pcm_f32), 960):

@@ -5,11 +5,15 @@ from typing import Optional, Tuple
 
 
 class SileroVAD:
-	def __init__(self, model_path: str, threshold: float = 0.5, window_ms: int = 20, end_ms: int = 500):
+	def __init__(self, model_path: str, threshold: float = 0.5, window_ms: int = 20, end_ms: int = 2000):
 		thr = float(os.getenv("VAD_THRESHOLD", threshold))
 		wnd = int(os.getenv("VAD_WINDOW_MS", window_ms))
 		endw = int(os.getenv("VAD_END_MS", end_ms))
-		self.session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"]) if os.path.exists(model_path) else None
+		try:
+			self.session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"]) if os.path.exists(model_path) else None
+		except Exception as e:
+			print(f"Failed to load Silero VAD model: {e}")
+			self.session = None
 		self.threshold = thr
 		self.window_samples = int(16000 * wnd / 1000)
 		self.end_samples = int(16000 * endw / 1000)

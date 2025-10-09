@@ -25,13 +25,23 @@ class WhisperCpp:
 				"-m", self.model_path,
 				"-f", wav_path,
 				"-l", language,
-				"-ml", "0",
-				"-nt"  # no timestamps to reduce output parsing
+				"-t", "1"  # single thread for faster response
 			]
 			try:
 				out = subprocess.check_output(cmd, stderr=subprocess.STDOUT, universal_newlines=True)
-				# Heuristic: take the last non-empty line as text
-				lines = [l.strip() for l in out.splitlines() if l.strip()]
-				return lines[-1] if lines else ""
+				# Parse transcription lines - they start with timestamps [HH:MM:SS.mmm --> HH:MM:SS.mmm]
+				transcription_lines = []
+				for line in out.splitlines():
+					line = line.strip()
+					# Look for lines with timestamp format
+					if line.startswith('[') and '-->' in line and ']' in line:
+						# Extract text after the closing bracket
+						text_part = line.split(']', 1)[1].strip()
+						if text_part and text_part not in ['[BLANK_AUDIO]', '(BLANK_AUDIO)', '']:
+							transcription_lines.append(text_part)
+				
+				result = ' '.join(transcription_lines).strip()
+				return result
 			except subprocess.CalledProcessError as e:
-				return None
+				print(f"Whisper error: {e}")
+				return ""
