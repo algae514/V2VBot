@@ -87,6 +87,10 @@ async function createPeerAndConnect(stream) {
 		log('dc message', ev.data);
 		try {
 			const msg = JSON.parse(ev.data);
+			console.log('Parsed message:', msg); // Additional debugging
+			
+			// Add error handling for each message type
+			try {
 			
 		// Handle new event-based format
 		if (msg.event === 'turn_started') {
@@ -128,20 +132,24 @@ async function createPeerAndConnect(stream) {
 		}
 		if (msg.event === 'llm_chunk' && msg.text !== undefined) {
 			// Append streaming chunks
+			const beforeText = llmResponseEl.textContent;
 			if (llmResponseEl.textContent === '💭 Thinking...') {
 				llmResponseEl.textContent = msg.text;
 			} else {
 				llmResponseEl.textContent += msg.text;
 			}
+			const afterText = llmResponseEl.textContent;
 			llmResponseEl.style.fontStyle = 'normal';
 			llmResponseEl.style.opacity = '1';
+			log('🤖 LLM chunk:', msg.text, '| Before:', beforeText, '| After:', afterText);
 		}
 		if (msg.event === 'llm_complete' && msg.text !== undefined) {
-			// Show complete LLM response
+			// Always use the complete response from the server to ensure accuracy
+			const beforeText = llmResponseEl.textContent;
 			llmResponseEl.textContent = msg.text;
 			llmResponseEl.style.fontStyle = 'normal';
 			llmResponseEl.style.opacity = '1';
-			log('🤖 LLM complete');
+			log('🤖 LLM complete:', msg.text, '| Before:', beforeText, '| After:', llmResponseEl.textContent);
 		}
 		if (msg.event === 'llm_error') {
 			llmResponseEl.textContent = '❌ Error: ' + (msg.error || 'Unknown error');
@@ -164,8 +172,13 @@ async function createPeerAndConnect(stream) {
 			if (msg.ok) log('server ok');
 			if (msg.audio) log('server audio', 'fps', msg.audio.fps, 'rms', msg.audio.rms);
 			if (msg.error) log('server error', msg.error);
+			} catch (msgError) {
+				log('❌ Error processing message:', msgError, '| Message:', msg);
+				console.error('Message processing error:', msgError, msg);
+			}
 		} catch (e) {
-			// ignore parse errors
+			log('❌ JSON parse error:', e, '| Raw data:', ev.data);
+			console.error('JSON parse error:', e, ev.data);
 		}
 	};
 

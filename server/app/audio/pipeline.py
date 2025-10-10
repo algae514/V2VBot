@@ -108,7 +108,8 @@ class AudioPipeline:
 			self.buffer_audio.clear()
 			
 			# Send turn_final event
-			self.dc_send('{"event":"turn_final","text":"' + self.last_utterance_text.replace('"', '\\"') + '"}')
+			escaped_text = self.last_utterance_text.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
+			self.dc_send('{"event":"turn_final","text":"' + escaped_text + '"}')
 				
 		except Exception as e:
 			print(f"[UTTERANCE] Error: {e}")
@@ -128,7 +129,8 @@ class AudioPipeline:
 			self.vad.reset()
 			
 			# Send turn_complete with previously transcribed text
-			self.dc_send('{"event":"turn_complete","text":"' + self.last_utterance_text.replace('"', '\\"') + '"}')
+			escaped_text = self.last_utterance_text.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
+			self.dc_send('{"event":"turn_complete","text":"' + escaped_text + '"}')
 			
 			# Generate LLM response if available
 			if self.llm and self.last_utterance_text.strip():
@@ -156,14 +158,19 @@ class AudioPipeline:
 			
 			# Stream response chunks
 			full_response = ""
+			chunk_count = 0
 			async for chunk in self.llm.generate_streaming(user_text):
 				full_response += chunk
+				chunk_count += 1
 				# Send each chunk as llm_chunk event
-				self.dc_send('{"event":"llm_chunk","text":"' + chunk.replace('"', '\\"') + '"}')
+				print(f"[LLM] Sending chunk {chunk_count}: '{chunk}'")
+				escaped_chunk = chunk.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
+				self.dc_send('{"event":"llm_chunk","text":"' + escaped_chunk + '"}')
 			
 			# Send llm_complete with full response
 			print(f"[LLM] Response: '{full_response}'")
-			self.dc_send('{"event":"llm_complete","text":"' + full_response.replace('"', '\\"') + '"}')
+			escaped_response = full_response.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
+			self.dc_send('{"event":"llm_complete","text":"' + escaped_response + '"}')
 			
 		except Exception as e:
 			print(f"[LLM] Error: {e}")
