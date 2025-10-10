@@ -12,27 +12,33 @@
 - Create start.sh to bootstrap venv and run server
 - **WebRTC signaling (REST+WebSocket) and media/data channels** ✅
 - **Real-time audio streaming and processing** ✅
-- **Voice Activity Detection (VAD) with energy-based fallback** ✅
-- **Audio pipeline with 16kHz mono processing** ✅
+- **Voice Activity Detection (VAD) with Silero ONNX model** ✅
+  - Implemented Silero VAD with proper state management
+  - Fixed LSTM state handling and model invocation
+  - Added fallback to energy-based detection
+  - Tuned thresholds for optimal performance
+- **Audio Pipeline Optimization** ✅
+  - Fixed sample rate mismatch (browser sending stereo as mono)
+  - Implemented dynamic sample rate detection
+  - Added stereo-to-mono conversion
+  - Optimized audio buffering (only during speech)
 - **WebRTC DataChannel communication** ✅
 - **Minimal web UI with click-to-talk functionality** ✅
 - **Environment setup for macOS with Homebrew dependencies** ✅
-- **Speech-to-Text (STT) with Whisper.cpp integration** ✅
-  - Fixed binary path: using `/opt/homebrew/bin/whisper-cli`
-  - Fixed deadlock issue in audio pipeline
-  - Fixed output parsing to extract transcriptions correctly
-  - Successfully transcribing speech (e.g., "Oh, that's nice.")
+- **Speech-to-Text (STT) with Faster-Whisper integration** ✅
+  - Switched from whisper.cpp to faster-whisper for better accuracy
+  - Implemented audio preprocessing (DC offset, high-pass filter, normalization)
+  - Fixed sample rate detection and stereo-to-mono conversion
+  - Successfully transcribing speech with high accuracy
 
-## Working but Needs Tuning 🔧
-- **VAD Sensitivity**: Currently triggering on background noise
-  - Whisper hallucinates sounds from noise: "(dramatic music)", "(sigh)", "[SOUND]"
-  - Fallback energy-based VAD may be too sensitive
-  - Considers: adjusting threshold or using Silero VAD ONNX model
-  - End-of-speech detection set to 1.5s of silence
+- **Code Cleanup and Production Readiness** ✅
+  - Removed debugging code and verbose logging
+  - Cleaned up frontend (removed file upload)
+  - Added models to .gitignore
+  - Removed models from git history
+  - Organized models in models/ directory
 
 ## Pending
-- Tune VAD thresholds to reduce false positives on background noise
-- Download/configure Silero VAD ONNX model for better accuracy
 - Integrate streaming STT with partials and endpointing
 - Wire LLM (Gemini streaming) with partials and tool hooks
 - Implement TTS (OpenVoice) with chunked/streamed synthesis
@@ -42,24 +48,27 @@
 - Containerize for Runpod single-machine; add STUN config
 - Add metrics/observability and health checks
 
-## Current System Status (October 2024)
+## Current System Status (January 2025)
 - **WebRTC Connection**: ✅ Working perfectly
-- **Audio Streaming**: ✅ Real-time audio capture and processing (87-144 fps)
-- **VAD Detection**: ✅ Turn start/end detection working (with false positives)
-- **Audio Quality**: ✅ Good RMS levels (0.001-0.004 ambient, 0.029+ during speech)
+- **Audio Streaming**: ✅ Real-time audio capture and processing
+- **VAD Detection**: ✅ Silero VAD working with proper thresholds
+- **Audio Quality**: ✅ High-quality preprocessing and normalization
 - **DataChannel**: ✅ Bidirectional communication working
-- **STT Integration**: ✅ Whisper.cpp transcribing successfully
-- **Audio Bitrate**: ✅ Stable 28-31 kbps send rate
+- **STT Integration**: ✅ Faster-Whisper transcribing accurately
+- **Sample Rate Handling**: ✅ Dynamic detection (16k-96kHz support)
+- **Stereo Support**: ✅ Automatic stereo-to-mono conversion
 
-## Issues Fixed (October 9, 2024)
-1. ✅ **Deadlock in audio pipeline**: Fixed by releasing lock before calling `_on_utterance_end()`
-2. ✅ **Wrong Whisper binary**: Changed from Python Whisper to `whisper-cli`
-3. ✅ **Invalid command parameters**: Updated to use correct whisper-cli flags
-4. ✅ **Output parsing**: Now correctly extracts transcription from timestamp lines
+## Issues Fixed (January 2025)
+1. ✅ **Silero VAD Implementation**: Fixed state management and model invocation
+2. ✅ **Sample Rate Mismatch**: Fixed browser stereo vs mono detection
+3. ✅ **Audio Quality**: Implemented preprocessing and normalization
+4. ✅ **STT Accuracy**: Switched to faster-whisper for better performance
+5. ✅ **Code Cleanup**: Removed debugging code and organized structure
+6. ✅ **Git Management**: Added models to .gitignore and cleaned history
 
 ## Next Steps (immediate)
-1. **Tune VAD sensitivity**: Reduce false positives on background noise
-2. **Add Silero VAD model**: Download and configure for better speech detection
-3. **Add LLM integration**: Connect Gemini for response generation
-4. **Implement TTS**: Add text-to-speech synthesis
-5. **Add UI feedback**: Display transcriptions in the web interface
+1. **Add LLM integration**: Connect Gemini for response generation
+2. **Implement TTS**: Add text-to-speech synthesis
+3. **Add streaming STT**: Implement partial results
+4. **Add barge-in**: Detect mic during TTS, cancel synthesis
+5. **Add metrics**: Implement observability and health checks

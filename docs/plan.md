@@ -3,7 +3,7 @@
 ## Goals
 - Ultra-low-latency, full-duplex voice assistant with streaming E2E (WebRTC).
 - CPU-first local development (Ryzen 7, 32 GB RAM); upgradeable to GPU later.
-- Components: Whisper (faster-whisper/whisper.cpp) for STT, Gemini for LLM, OpenVoice for TTS, WebRTC VAD + endpointing for turn detection, barge-in support.
+- Components: Whisper (faster-whisper) for STT, Gemini for LLM, OpenVoice for TTS, Silero VAD + endpointing for turn detection, barge-in support.
 
 ## Phases
 1. MVP

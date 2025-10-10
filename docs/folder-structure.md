@@ -8,46 +8,35 @@
 │  ├─ requirements.md
 │  ├─ folder-structure.md
 │  ├─ architecture-rules.md
-│  └─ code-rules.md
+│  ├─ code-rules.md
+│  └─ current-status.md
 ├─ server/
 │  ├─ app/
 │  │  ├─ main.py
-│  │  ├─ webrtc/
-│  │  │  ├─ signaling.py
-│  │  │  ├─ rtc_peer.py
-│  │  │  └─ codecs.py
 │  │  ├─ audio/
 │  │  │  ├─ pipeline.py
-│  │  │  ├─ vad.py
+│  │  │  ├─ vad_silero.py
 │  │  │  └─ resample.py
-│  │  ├─ stt/
-│  │  │  ├─ faster_whisper.py
-│  │  │  └─ streaming.py
-│  │  ├─ llm/
-│  │  │  └─ gemini.py
-│  │  ├─ tts/
-│  │  │  ├─ openvoice.py
-│  │  │  └─ streaming.py
-│  │  ├─ control/
-│  │  │  ├─ messages.py
-│  │  │  └─ state.py
-│  │  └─ metrics/
-│  │     ├─ latency.py
-│  │     └─ health.py
+│  │  └─ stt/
+│  │     └─ whisper_faster.py
 │  ├─ requirements.txt
-│  └─ Dockerfile
+│  └─ start_macos.sh
 ├─ web/
 │  ├─ public/
 │  │  └─ index.html
 │  └─ src/
-│     ├─ main.js
-│     ├─ webrtc.js
-│     └─ ui.js
+│     └─ main.js
+├─ models/
+│  ├─ silero_vad.onnx
+│  └─ (other model files - gitignored)
+├─ .gitignore
 └─ .cursorrules
 ```
 
 Notes:
 - `server/app` uses FastAPI + aiortc; asyncio-based pipelines.
-- All audio fixed at 16 kHz mono; Opus 20 ms frames.
-- DataChannel carries transcripts, LLM partials, control signals, and metrics.
+- Audio supports dynamic sample rates (16k-96kHz) with automatic detection.
+- Uses Silero VAD for voice detection and faster-whisper for STT.
+- DataChannel carries transcripts, control signals, and metrics.
+- Models are gitignored and stored in `models/` directory.
 

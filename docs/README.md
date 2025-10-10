@@ -13,8 +13,8 @@ This folder contains the project plan, requirements, folder structure, architect
 ## Quick Start (macOS)
 
 ```bash
-# Install dependencies
-brew install whisper-cpp
+# Install dependencies (if needed)
+# Models are automatically downloaded by faster-whisper
 
 # Start the server
 ./start_macos.sh
@@ -22,20 +22,24 @@ brew install whisper-cpp
 # Open browser to http://localhost:8000
 ```
 
-## Current Status (October 2024)
+## Current Status (January 2025)
 
 ✅ **Working:**
-- WebRTC real-time audio streaming (28-31 kbps)
-- Voice Activity Detection (VAD) with energy-based fallback
-- Audio pipeline processing (16kHz mono, 87-144 fps)
+- WebRTC real-time audio streaming
+- Voice Activity Detection (Silero VAD) with energy-based fallback
+- Audio pipeline processing with dynamic sample rate detection
 - WebRTC DataChannel communication
 - Minimal web UI with click-to-talk
-- **Speech-to-Text: Whisper.cpp integration working!**
-  - Successfully transcribing speech
-  - Fixed binary path and output parsing issues
+- **Speech-to-Text: Faster-Whisper integration working!**
+  - High accuracy transcription with audio preprocessing
+  - Dynamic sample rate detection (16k-96kHz support)
+  - Stereo-to-mono conversion
+  - Production-ready with clean code
 
-🔧 **Needs Tuning:**
-- VAD sensitivity: Reduces false positives from background noise
-- Whisper hallucinations on ambient sounds (e.g., "(dramatic music)", "(sigh)")
+✅ **Recently Fixed:**
+- Sample rate mismatch issues (browser stereo vs mono)
+- VAD sensitivity and false positives
+- Audio quality and preprocessing
+- Code cleanup and production readiness
 
 For implementation, start with the plan, then follow the folder structure and rules. The `.cursorrules` file guides Cursor to keep edits consistent with these docs.

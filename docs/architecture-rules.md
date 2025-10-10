@@ -9,10 +9,10 @@
 - Barge-in: Mic VAD during TTS triggers cancel of TTS and LLM promptly.
 
 ## Turn Detection
-- WebRTC VAD (20 ms frames, aggressiveness 2) + endpointing.
-- Start-of-speech: 2–3 consecutive voiced frames.
-- End-of-utterance: 400–600 ms unvoiced.
-- Adaptive RMS gate and debounce to avoid spurious ends.
+- Silero VAD (20 ms frames) + endpointing.
+- Start-of-speech: 20ms of consecutive voiced frames.
+- End-of-utterance: 1500ms of unvoiced.
+- Fallback to energy-based detection if Silero fails.
 
 ## Concurrency & Backpressure
 - Async pipelines with bounded queues; drop or coalesce old partials under pressure.
