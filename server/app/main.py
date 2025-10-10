@@ -121,33 +121,46 @@ async def offer(request: Request) -> JSONResponse:
 			if track.kind == "audio":
 				pipeline = AudioPipeline(lambda payload: refs["ch"] and refs["ch"].send(payload))
 				await media_blackhole.start()
-				frames = 0
-				last_log = time.monotonic()
-				last_rms = 0.0
+				actual_sample_rate = None
+				is_stereo = False
 				try:
 					while True:
 						frame = await track.recv()
+						
+						# Detect sample rate and channel config from first frame
+						if actual_sample_rate is None:
+							reported_rate = frame.sample_rate
+							samples_per_frame = frame.samples
+							test_array = frame.to_ndarray().astype(np.int16).reshape(-1)
+							actual_samples_in_frame = len(test_array)
+							
+							# If ratio is ~2.0, it's stereo - use per-channel count
+							if actual_samples_in_frame / samples_per_frame > 1.5:
+								is_stereo = True
+								actual_sample_rate = int(samples_per_frame / 0.020)  # 20ms frames
+								logger.info(f"Audio: {actual_sample_rate}Hz, STEREO, will convert to MONO")
+							else:
+								is_stereo = False
+								actual_sample_rate = int(actual_samples_in_frame / 0.020)
+								logger.info(f"Audio: {actual_sample_rate}Hz, MONO")
+							
+							# Skip first frame (used for detection)
+							continue
+						
 						pcm = frame.to_ndarray().astype(np.int16)
 						pcm = pcm.reshape(-1)
+						
+						# Convert stereo to mono if needed
+						if is_stereo:
+							left = pcm[::2]
+							right = pcm[1::2]
+							pcm = ((left.astype(np.int32) + right.astype(np.int32)) // 2).astype(np.int16)
+						
 						pcm_f32 = (pcm.astype(np.float32) / 32768.0)
-						for i in range(0, len(pcm_f32), 960):
-							chunk = pcm_f32[i:i+960]
-							if len(chunk) < 960:
-								break
-							last_rms = float(np.sqrt(np.mean(chunk * chunk)))
-							await pipeline.handle_audio_frame(chunk)
-							frames += 1
-							now = time.monotonic()
-							if now - last_log >= 1.0:
-								logger.info("audio frames/s=%d rms=%.3f", frames, last_rms)
-								print(f"audio frames/s={frames} rms={last_rms:.3f}")
-								try:
-									if refs["ch"]:
-										refs["ch"].send(json.dumps({"audio":{"fps": frames, "rms": round(last_rms, 3)}}))
-								except Exception:
-									pass
-								frames = 0
-								last_log = now
+						
+						# Process audio frame
+						if len(pcm_f32) > 0:
+							await pipeline.handle_audio_frame(pcm_f32, actual_sample_rate)
 				except Exception as e:
 					logger.exception("audio loop error")
 					print("audio loop error", e)

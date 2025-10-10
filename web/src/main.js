@@ -2,8 +2,6 @@ const logEl = document.getElementById('log');
 const statusEl = document.getElementById('status');
 const transcriptEl = document.getElementById('transcript');
 const startBtn = document.getElementById('start');
-const startFileBtn = document.getElementById('startFile');
-const fileInput = document.getElementById('fileInput');
 
 let pc;
 let dc;
@@ -123,13 +121,12 @@ async function startMic() {
 	startBtn.disabled = true;
 	try {
 		log('requesting mic');
+		
+		// Absolute bare minimum - let browser use native format with NO processing
 		micStream = await navigator.mediaDevices.getUserMedia({
 			audio: {
-				channelCount: 1,
-				sampleRate: 16000,
-				noiseSuppression: true,
-				echoCancellation: true,
-				autoGainControl: true
+				channelCount: 1
+				// No constraints at all - browser uses native capture format
 			},
 			video: false
 		});
@@ -141,29 +138,4 @@ async function startMic() {
 	}
 }
 
-async function startFromFile() {
-	startFileBtn.disabled = true;
-	try {
-		const file = fileInput.files && fileInput.files[0];
-		if (!file) throw new Error('no file selected');
-		const url = URL.createObjectURL(file);
-		const audio = new Audio();
-		audio.src = url;
-		await audio.play().catch(() => {});
-		const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
-		await ctx.resume();
-		const src = ctx.createMediaElementSource(audio);
-		const dst = ctx.createMediaStreamDestination();
-		src.connect(dst);
-		src.connect(ctx.destination);
-		const stream = dst.stream;
-		log('using file audio stream');
-		await createPeerAndConnect(stream);
-	} catch (err) {
-		log('error', err && (err.stack || err.message || String(err)));
-		startFileBtn.disabled = false;
-	}
-}
-
 startBtn.addEventListener('click', () => startMic().catch((e) => log('fatal', e && e.message)));
-startFileBtn.addEventListener('click', () => startFromFile().catch((e) => log('fatal', e && e.message)));

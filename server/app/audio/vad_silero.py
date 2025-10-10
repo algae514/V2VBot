@@ -20,6 +20,10 @@ class SileroVAD:
 		self._voiced_run = 0
 		self._unvoiced_run = 0
 		self.active = False
+		
+		# Initialize LSTM state for Silero VAD: [2, batch_size, 128]
+		self._state = np.zeros((2, 1, 128), dtype=np.float32)
+		self._sample_rate = np.array(16000, dtype=np.int64)
 
 	def is_ready(self) -> bool:
 		return self.session is not None
@@ -28,17 +32,39 @@ class SileroVAD:
 		self._voiced_run = 0
 		self._unvoiced_run = 0
 		self.active = False
+		# Reset LSTM state
+		self._state = np.zeros((2, 1, 128), dtype=np.float32)
 
 	def process(self, audio_16k: np.ndarray) -> Tuple[bool, Optional[str]]:
 		# audio_16k: 1D float32 in [-1,1], length = window_samples
 		if self.session is None:
 			# Fallback: simple energy gate
 			energy = float(np.mean(np.abs(audio_16k)))
-			voiced = energy > float(os.getenv("VAD_ENERGY_FALLBACK", 0.003))
+			voiced = energy > float(os.getenv("VAD_ENERGY_FALLBACK", 0.05))
 		else:
-			inp = audio_16k.astype(np.float32).reshape(1, -1)
-			probs = self.session.run(None, {self.session.get_inputs()[0].name: inp})[0]
-			voiced = float(probs[0, 0]) > self.threshold
+			# Prepare inputs for Silero VAD
+			inp = audio_16k.astype(np.float32).reshape(1, -1)  # [batch, samples]
+			
+			try:
+				# Call model with all required inputs
+				inputs = {
+					'input': inp,
+					'state': self._state,
+					'sr': self._sample_rate
+				}
+				outputs = self.session.run(None, inputs)
+				
+				# Extract speech probability and update state
+				probs = outputs[0]  # [batch, 1]
+				self._state = outputs[1]  # [2, batch, 128] - update for next call
+				
+				speech_prob = float(probs[0, 0])
+				voiced = speech_prob > self.threshold
+			except Exception as e:
+				print(f"Silero VAD error: {e}, falling back to energy detection")
+				# Fallback to energy detection if Silero fails
+				energy = float(np.mean(np.abs(audio_16k)))
+				voiced = energy > float(os.getenv("VAD_ENERGY_FALLBACK", 0.05))
 
 		if voiced:
 			self._voiced_run += self.window_samples
@@ -49,7 +75,7 @@ class SileroVAD:
 
 		started = False
 		ended = None
-		if not self.active and self._voiced_run >= 2 * self.window_samples:
+		if not self.active and self._voiced_run >= self.window_samples:
 			self.active = True
 			started = True
 		if self.active and self._unvoiced_run >= self.end_samples:

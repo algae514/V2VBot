@@ -13,14 +13,14 @@ if [ ! -d .venv ]; then
 fi
 
 # Check if models exist
-if [ ! -f models/ggml-tiny.en.bin ]; then
-    echo "Whisper model not found. Please download models first."
+if [ ! -f models/ggml-small.en.bin ]; then
+    echo "Whisper small.en model not found. Please download models first."
     exit 1
 fi
 
 # Set environment variables
 export WHISPER_CPP_BIN=/opt/homebrew/bin/whisper-cli
-export WHISPER_CPP_MODEL=./models/ggml-tiny.en.bin
+export WHISPER_CPP_MODEL=./models/ggml-small.en.bin
 export SILERO_VAD_ONNX=./silero_vad.onnx
 
 echo "killing if a process already running at the port ..."

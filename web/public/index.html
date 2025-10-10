@@ -6,28 +6,19 @@
 	<title>V2VBot</title>
 	<style>
 		body { font-family: system-ui, Arial, sans-serif; margin: 24px; }
-		#start, #startFile { font-size: 18px; padding: 10px 16px; }
-		#log { white-space: pre-wrap; background: #f5f5f5; padding: 12px; border-radius: 6px; }
+		#start { font-size: 18px; padding: 10px 16px; }
+		#log { white-space: pre-wrap; background: #f5f5f5; padding: 12px; border-radius: 6px; margin-top: 12px; }
+		#transcript { font-size: 20px; font-weight: bold; margin: 12px 0; }
 	</style>
 </head>
 <body>
 	<h1>V2VBot</h1>
-	<div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
-		<button id="start">Start (Mic)</button>
-		<input type="file" id="fileInput" accept="audio/*" />
-		<button id="startFile">Start (From File)</button>
-	</div>
+	<button id="start">Start</button>
 	<div id="status"></div>
 	<h3>Transcript</h3>
 	<div id="transcript"></div>
 	<h3>Log</h3>
 	<div id="log"></div>
-	<script>
-		window.addEventListener('error', (e) => {
-			const log = document.getElementById('log');
-			log.textContent += 'error: ' + (e.message || e.error) + '\n';
-		});
-	</script>
 	<script src="/assets/main.js"></script>
 </body>
 </html>

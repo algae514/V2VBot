@@ -60,3 +60,13 @@ yarn-error.log*
 # Temporary files
 *.tmp
 *.temp
+
+# ML Models (large files)
+models/
+*.bin
+*.onnx
+*.pt
+*.pth
+*.h5
+*.pb
+debug_audio/

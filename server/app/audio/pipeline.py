@@ -8,38 +8,49 @@ from aiortc import MediaStreamTrack
 
 from .resample import to_mono, resample_48k_to_16k
 from .vad_silero import SileroVAD
-from ..stt.whisper_cpp import WhisperCpp
+from ..stt.whisper_faster import WhisperFaster
 
 
 class AudioPipeline:
 	def __init__(self, dc_send: Callable[[str], None]):
 		# Re-enable VAD with fallback to energy-based detection if model not available
-		model_path = os.getenv("SILERO_VAD_ONNX", "silero_vad.onnx")
-		self.vad = SileroVAD(model_path=model_path, threshold=0.5, window_ms=20, end_ms=1500)
-		self.whisper = WhisperCpp(
-			binary_path=os.getenv("WHISPER_CPP_BIN", "./main"),
-			model_path=os.getenv("WHISPER_CPP_MODEL", "./models/ggml-tiny.en.bin"),
-		)
-		self.buffer_16k: list[np.ndarray] = []
+		model_path = os.getenv("SILERO_VAD_ONNX", "models/silero_vad.onnx")
+		self.vad = SileroVAD(model_path=model_path, threshold=0.3, window_ms=20, end_ms=1500)
+		
+		# Use Faster Whisper for better accuracy with accents
+		whisper_model = os.getenv("WHISPER_MODEL", "small.en")
+		self.whisper = WhisperFaster(model_size=whisper_model, device="cpu", compute_type="int8")
+		self.buffer_audio: list[np.ndarray] = []  # Buffer original audio for Whisper
+		self.buffer_sample_rate: int = 48000  # Track the sample rate of buffered audio
 		self.dc_send = dc_send
-		self.frame_samples_48k = 960  # 20 ms at 48k
-		self.frame_samples_16k = 320  # 20 ms at 16k
 		self._lock = asyncio.Lock()
 		self.frame_count = 0
 
-	async def handle_audio_frame(self, pcm48: np.ndarray) -> None:
-		# pcm48: float32 mono samples, length 960
+	async def handle_audio_frame(self, audio: np.ndarray, sample_rate: int = 48000) -> None:
+		# audio: float32 mono samples at given sample_rate
 		self.frame_count += 1
 		
-		pcm16 = resample_48k_to_16k(pcm48)
+		# Downsample to 16kHz for VAD processing
+		if sample_rate == 48000:
+			pcm16 = resample_48k_to_16k(audio)
+		elif sample_rate == 16000:
+			pcm16 = audio
+		else:
+			# General resampling for other rates
+			import scipy.signal
+			num_samples_16k = int(len(audio) * 16000 / sample_rate)
+			pcm16 = scipy.signal.resample(audio, num_samples_16k).astype(np.float32)
+		
 		started, ended = self.vad.process(pcm16)
 		
 		if started:
+			self.buffer_sample_rate = sample_rate
 			self.dc_send('{"event":"turn_started"}')
 		
-		# Accumulate audio during speech
-		async with self._lock:
-			self.buffer_16k.append(pcm16.copy())
+		# Buffer original audio when VAD is active (during speech)
+		if self.vad.active:
+			async with self._lock:
+				self.buffer_audio.append(audio.copy())
 		
 		# Process OUTSIDE the lock to avoid deadlock
 		if ended:
@@ -48,10 +59,11 @@ class AudioPipeline:
 	async def _on_utterance_end(self) -> None:
 		try:
 			async with self._lock:
-				if not self.buffer_16k:
+				if not self.buffer_audio:
 					return
-				utt = np.concatenate(self.buffer_16k)
-				self.buffer_16k.clear()
+				utt_audio = np.concatenate(self.buffer_audio)
+				sample_rate = self.buffer_sample_rate
+				self.buffer_audio.clear()
 				self.vad.reset()
 			
 			self.dc_send('{"event":"turn_final"}')
@@ -63,8 +75,7 @@ class AudioPipeline:
 			
 			# Offload STT to a thread to avoid blocking loop
 			loop = asyncio.get_running_loop()
-			text = await loop.run_in_executor(None, self.whisper.transcribe_16k, utt)
-			print(f"Transcription: '{text}'")
+			text = await loop.run_in_executor(None, self.whisper.transcribe, utt_audio, sample_rate)
 			
 			if text:
 				self.dc_send('{"final":"' + text.replace('"', '\\"') + '"}')
