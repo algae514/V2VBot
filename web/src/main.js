@@ -8,11 +8,107 @@ let pc;
 let dc;
 let micStream;
 let statsTimer = null;
+let audioContext = null;
+let audioQueue = [];
+let isPlayingAudio = false;
+let currentAudioSource = null; // Track current playing audio for interruption
 
 function log(...args) {
 	const line = args.map(String).join(' ');
-	console.log('[ui]', line);
-	logEl.textContent += line + '\n';
+	// console.log('[ui]', line);
+	// Only append to logEl if not a tts_chunk message
+	if (!line.includes('tts_chunk')) {
+		logEl.textContent += line + '\n';
+	}
+}
+
+async function initAudioContext() {
+	if (!audioContext) {
+		audioContext = new (window.AudioContext || window.webkitAudioContext)();
+		log('🎵 Audio context initialized');
+	}
+	return audioContext;
+}
+
+async function playAudioChunk(audioData, sampleRate) {
+	try {
+		const ctx = await initAudioContext();
+		
+		// Convert base64 to ArrayBuffer
+		const binaryString = atob(audioData);
+		const bytes = new Uint8Array(binaryString.length);
+		for (let i = 0; i < binaryString.length; i++) {
+			bytes[i] = binaryString.charCodeAt(i);
+		}
+		
+		// Convert to AudioBuffer
+		const audioBuffer = ctx.createBuffer(1, bytes.length / 2, sampleRate);
+		const channelData = audioBuffer.getChannelData(0);
+		
+		// Convert int16 to float32
+		for (let i = 0; i < bytes.length / 2; i++) {
+			const sample = (bytes[i * 2] | (bytes[i * 2 + 1] << 8));
+			channelData[i] = sample < 32768 ? sample / 32768 : (sample - 65536) / 32768;
+		}
+		
+		// Play audio and return promise that resolves when finished
+		const source = ctx.createBufferSource();
+		source.buffer = audioBuffer;
+		source.connect(ctx.destination);
+		
+		// Track current audio source for interruption
+		currentAudioSource = source;
+		
+		return new Promise((resolve) => {
+			source.onended = () => {
+				log(`🔊 Finished playing audio chunk: ${audioBuffer.length} samples at ${sampleRate}Hz`);
+				currentAudioSource = null;
+				resolve();
+			};
+			source.start();
+			log(`🔊 Playing audio chunk: ${audioBuffer.length} samples at ${sampleRate}Hz`);
+		});
+		
+	} catch (error) {
+		log('❌ Audio playback error:', error);
+		throw error;
+	}
+}
+
+function interruptAudioPlayback() {
+	if (currentAudioSource) {
+		try {
+			currentAudioSource.stop();
+			log('🔇 Interrupted current audio playback');
+		} catch (error) {
+			// Audio source might already be stopped
+		}
+		currentAudioSource = null;
+	}
+	
+	// Clear audio queue
+	audioQueue = [];
+	isPlayingAudio = false;
+	log('🔇 Cleared audio queue and stopped playback');
+}
+
+async function processAudioQueue() {
+	if (isPlayingAudio || audioQueue.length === 0) return;
+	
+	isPlayingAudio = true;
+	log(`🎵 Starting sequential audio playback: ${audioQueue.length} sentences queued`);
+	
+	while (audioQueue.length > 0 && isPlayingAudio) {
+		const { audioData, sampleRate } = audioQueue.shift();
+		try {
+			await playAudioChunk(audioData, sampleRate);
+		} catch (error) {
+			log('❌ Error playing audio chunk:', error);
+		}
+	}
+	
+	isPlayingAudio = false;
+	log('🎵 Finished sequential audio playback');
 }
 
 function onUnhandledRejection(ev) {
@@ -87,8 +183,9 @@ async function createPeerAndConnect(stream) {
 		log('dc message', ev.data);
 		try {
 			const msg = JSON.parse(ev.data);
-			console.log('Parsed message:', msg); // Additional debugging
-			
+			if (msg.event !== 'tts_chunk') {
+				console.log('Parsed message:', msg); // Additional debugging
+			}
 			// Add error handling for each message type
 			try {
 			
@@ -98,6 +195,12 @@ async function createPeerAndConnect(stream) {
 			transcriptEl.style.fontStyle = 'normal';
 			transcriptEl.style.opacity = '1';
 			transcriptEl.style.color = '';
+			
+			// Interrupt audio playback when user starts speaking
+			if (isPlayingAudio) {
+				log('🔇 User started speaking - interrupting audio playback');
+				interruptAudioPlayback();
+			}
 		}
 		if (msg.event === 'turn_partial' && msg.text !== undefined) {
 			// Show partial results in lighter style
@@ -155,6 +258,32 @@ async function createPeerAndConnect(stream) {
 			llmResponseEl.textContent = '❌ Error: ' + (msg.error || 'Unknown error');
 			llmResponseEl.style.color = '#d32f2f';
 			log('❌ LLM error:', msg.error);
+		}
+		
+		// Handle TTS events
+		if (msg.event === 'tts_started') {
+			log('🎵 TTS synthesis started');
+		}
+		if (msg.event === 'tts_chunk' && msg.audio && msg.sample_rate) {
+			// Queue sentence audio for sequential playback
+			audioQueue.push({
+				audioData: msg.audio,
+				sampleRate: msg.sample_rate
+			});
+			log(`🎵 TTS sentence queued: ${msg.audio.length} bytes at ${msg.sample_rate}Hz`);
+			
+			// Process audio queue (will play sentences sequentially)
+			processAudioQueue();
+		}
+		if (msg.event === 'tts_complete') {
+			log('🎵 TTS synthesis complete');
+		}
+		if (msg.event === 'tts_interrupted') {
+			log('🔇 TTS synthesis interrupted by user');
+			// Audio interruption is already handled by turn_started event
+		}
+		if (msg.event === 'tts_error') {
+			log('❌ TTS error:', msg.error);
 		}
 			
 			// Backward compatibility: handle old format

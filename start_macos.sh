@@ -24,7 +24,7 @@ export WHISPER_CPP_MODEL=./models/ggml-small.en.bin
 export SILERO_VAD_ONNX=./silero_vad.onnx
 
 echo "killing if a process already running at the port ..."
-# kill -9 $(lsof -ti :8000)
+kill -9 $(lsof -ti :8000) &
 
 echo "Starting V2VBot server..."
 export GEMINI_MODEL="gemini-2.0-flash"

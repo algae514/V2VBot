@@ -4,9 +4,9 @@
 
 ### Current Processing Flow
 ```
-Browser → WebRTC → Server → Audio Pipeline → VAD → STT → Response
-   ↓         ↓        ↓           ↓         ↓     ↓       ↓
-Click → Connect → Receive → Process → Detect → Transcribe → Display
+Browser → WebRTC → Server → Audio Pipeline → VAD → STT → LLM → TTS → Audio Response
+   ↓         ↓        ↓           ↓         ↓     ↓      ↓     ↓        ↓
+Click → Connect → Receive → Process → Detect → Transcribe → Generate → Synthesize → Play
 ```
 
 ### Component Interaction Diagram
@@ -23,6 +23,11 @@ Click → Connect → Receive → Process → Detect → Transcribe → Display
 │ │Audio    │ │◀───│ │Audio     │ │◀───│ │Faster-  │ │
 │ │Playback │ │    │ │Pipeline  │ │    │ │Whisper  │ │
 │ └─────────┘ │    │ └──────────┘ │    │ └─────────┘ │
+│             │    │              │    │             │
+│ ┌─────────┐ │    │ ┌──────────┐ │    │ ┌─────────┐ │
+│ │Web      │ │◀───│ │LLM +     │ │◀───│ │Gemini   │ │
+│ │Audio    │ │    │ │TTS       │ │    │ │+ MeloTTS│ │
+│ └─────────┘ │    │ └──────────┘ │    │ └─────────┘ │
 └─────────────┘    └──────────────┘    └─────────────┘
 ```
 
@@ -38,8 +43,15 @@ Click → Connect → Receive → Process → Detect → Transcribe → Display
 - **LLM Integration**: Google Gemini (gemini-1.5-flash) for conversational AI
   - Streaming responses for real-time feedback
   - Conversation history maintained
+- **TTS Integration**: MeloTTS-English v3 for high-quality speech synthesis
+  - Sentence-based streaming for natural conversation flow
+  - 44100Hz CD-quality audio output
+  - Real-time audio chunk generation and transmission
+- **Barge-In Functionality**: Interrupt AI speech when user starts speaking
+  - Immediate audio interruption and queue clearing
+  - Natural conversation flow with interruption detection
 - **Data Channel**: Event-based bidirectional communication
-- **Frontend**: Minimal UI with transcription display, turn-complete indicator, and LLM response streaming
+- **Frontend**: Complete voice-to-voice UI with audio playback and interruption handling
 
 ### 🔄 Complete Voice-to-Voice Pipeline (FINALIZED)
 1. **Audio Capture**: Browser captures microphone audio
@@ -56,7 +68,18 @@ Click → Connect → Receive → Process → Detect → Transcribe → Display
 9. **LLM Processing**: Gemini generates conversational response
    - Streaming text chunks sent in real-time
    - Conversation history maintained for context
-10. **Response**: All events sent via DataChannel for real-time UI updates
+10. **TTS Synthesis**: MeloTTS-English v3 converts LLM response to speech
+    - Sentence-based streaming for natural conversation flow
+    - Audio transmitted via DataChannel as base64-encoded chunks
+    - 44100Hz CD-quality audio output
+11. **Audio Playback**: Browser plays synthesized speech using Web Audio API
+    - Sequential sentence playback for natural flow
+    - Audio interruption when user starts speaking (barge-in)
+12. **Barge-In Detection**: VAD detects user speech during TTS playback
+    - Immediate interruption of current audio
+    - Queue clearing and pipeline restart
+    - Conversation history preserved
+13. **Response**: All events sent via DataChannel for real-time UI updates
 
 ### 📊 Performance Characteristics (Benchmarked)
 - **Audio Latency**: ~20-40ms (WebRTC transport)
@@ -91,6 +114,15 @@ The system emits structured events for real-time communication:
 {"event": "llm_error", "error": "..."}                 // LLM error occurred
 ```
 
+**TTS Event Types:**
+```json
+{"event": "tts_started"}                               // TTS synthesis started
+{"event": "tts_chunk", "audio": "...", "sample_rate": 44100}  // Audio chunk (base64)
+{"event": "tts_complete"}                              // TTS synthesis complete
+{"event": "tts_interrupted"}                           // TTS interrupted by user speech
+{"event": "tts_error", "error": "..."}                // TTS error occurred
+```
+
 **Complete Event Flow:**
 1. User speaks → `turn_started`
 2. User pauses briefly (1.5s) → `turn_final` with transcription (still listening)
@@ -98,6 +130,10 @@ The system emits structured events for real-time communication:
 4. LLM starts → `llm_started` (thinking indicator)
 5. LLM streams response → multiple `llm_chunk` events
 6. LLM finishes → `llm_complete` with full response
+7. TTS starts → `tts_started` (synthesis indicator)
+8. TTS streams audio → multiple `tts_chunk` events with audio data
+9. TTS finishes → `tts_complete` (audio playback complete)
+10. **Barge-In**: User speaks during TTS → `turn_started` → `tts_interrupted` → restart pipeline
 
 ## Processing Architecture
 
@@ -117,11 +153,11 @@ The system emits structured events for real-time communication:
 - **CPU Efficient**: 50% CPU reduction (single vs double resampling)
 
 ### 🎯 Remaining for Full Real-Time Conversation
-**STT + LLM pipeline complete! Next critical items:**
+**STT + LLM + TTS pipeline complete! Next critical items:**
 - ~~**LLM Integration**~~: ✅ COMPLETE - Gemini with streaming responses
-- **No TTS**: Missing text-to-speech synthesis (OpenVoice)
+- ~~**TTS Integration**~~: ✅ COMPLETE - MeloTTS-English v3 with streaming audio
 - **No Barge-in**: Can't interrupt during TTS playback
-- **No Audio Output**: LLM responses are text-only, need voice synthesis
+- **Audio Output**: ✅ COMPLETE - LLM responses converted to voice and streamed to browser
 
 ## Development Strategy
 
@@ -184,6 +220,20 @@ The system emits structured events for real-time communication:
 6. **Add metrics** - Implement observability and health checks
 
 ## Recent Updates
+
+### 2025-10-10: Complete Voice-to-Voice Pipeline with Barge-In ✅
+- **MeloTTS Integration**: MeloTTS-English v3 for high-quality speech synthesis
+- **Sentence-Based Streaming**: Natural sentence-by-sentence audio delivery
+- **Audio Quality**: 44100Hz CD-quality audio output (corrected from 22050Hz)
+- **Barge-In Functionality**: Interrupt AI speech when user starts speaking
+  - Immediate audio interruption and queue clearing
+  - Natural conversation flow with interruption detection
+  - Conversation history preserved during interruptions
+- **Sequential Audio Playback**: Sentences play one after another for natural flow
+- **Complete Pipeline**: Speech → Text → LLM → Text → Speech (full voice-to-voice)
+- **Event-Driven Architecture**: `tts_started`, `tts_chunk`, `tts_complete`, `tts_interrupted`, `tts_error` events
+- **Model Size**: ~160MB MeloTTS-English v3 model + ~198MB Hugging Face cache
+- **Performance**: Real-time audio synthesis and streaming
 
 ### 2025-10-10: Gemini LLM Integration Implemented ✅
 - Integrated Google Gemini (gemini-1.5-flash) for conversational AI

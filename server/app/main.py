@@ -107,7 +107,11 @@ async def offer(request: Request) -> JSONResponse:
 			@channel.on("message")
 			def on_message(message):
 				if isinstance(message, str):
-					logger.info("dc<= %s", message)
+					# Don't log audio content to avoid cluttering logs
+					if '"event":"tts_chunk"' in message:
+						logger.info("dc<= tts_chunk (audio data excluded)")
+					else:
+						logger.info("dc<= %s", message)
 
 			async def _ping():
 				while True:

@@ -9,6 +9,7 @@ from aiortc import MediaStreamTrack
 from .vad_silero import SileroVAD
 from ..stt.whisper_faster import WhisperFaster
 from ..llm.gemini import GeminiLLM
+from ..tts.melo_tts import MeloTTS
 
 
 class AudioPipeline:
@@ -30,12 +31,34 @@ class AudioPipeline:
 			print(f"LLM disabled: {e}")
 			self.llm = None
 		
+		# Initialize MeloTTS
+		try:
+			self.tts = MeloTTS(device="cpu", language="EN")
+			print(f"TTS enabled: MeloTTS")
+		except Exception as e:
+			print(f"TTS disabled: {e}")
+			self.tts = None
+		
 		self.buffer_audio: list[np.ndarray] = []  # Buffer 16kHz audio for Whisper
 		self.dc_send = dc_send
 		self.frame_count = 0
 		self.last_utterance_text = ""  # Keep last transcription for turn_complete
+		self.tts_interrupted = False  # Flag to interrupt ongoing TTS
 		
-		print(f"AudioPipeline initialized: Sequential mode with LLM integration")
+		print(f"AudioPipeline initialized: Sequential mode with LLM and TTS integration")
+
+	async def _interrupt_tts(self) -> None:
+		"""
+		Interrupt any ongoing TTS synthesis when user starts speaking.
+		"""
+		if self.tts_interrupted:
+			return  # Already interrupted
+			
+		self.tts_interrupted = True
+		print("[TTS] Interrupted by user speech")
+		
+		# Send interruption event to frontend
+		self.dc_send('{"event":"tts_interrupted"}')
 
 	async def handle_audio_frame(self, audio_16k: np.ndarray) -> None:
 		"""
@@ -54,6 +77,9 @@ class AudioPipeline:
 			self.dc_send('{"event":"turn_started"}')
 			# Clear last utterance when starting new speech
 			self.last_utterance_text = ""
+			
+			# Interrupt any ongoing TTS synthesis
+			await self._interrupt_tts()
 		
 		# Buffer 16kHz audio when VAD is active (during speech)
 		if self.vad.active:
@@ -146,7 +172,7 @@ class AudioPipeline:
 	
 	async def _generate_llm_response(self, user_text: str) -> None:
 		"""
-		Generate and stream LLM response.
+		Generate and stream LLM response, then synthesize to speech.
 		
 		Args:
 			user_text: User's transcribed text
@@ -172,8 +198,68 @@ class AudioPipeline:
 			escaped_response = full_response.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
 			self.dc_send('{"event":"llm_complete","text":"' + escaped_response + '"}')
 			
+			# Generate TTS if available
+			if self.tts and self.tts.is_ready() and full_response.strip():
+				await self._synthesize_response(full_response)
+			
 		except Exception as e:
 			print(f"[LLM] Error: {e}")
 			self.dc_send('{"event":"llm_error","error":"' + str(e).replace('"', '\\"') + '"}')
+			import traceback
+			traceback.print_exc()
+	
+	async def _synthesize_response(self, text: str) -> None:
+		"""
+		Synthesize LLM response to speech and stream audio.
+		
+		Args:
+			text: Text to synthesize
+		"""
+		try:
+			# Reset interruption flag for new synthesis
+			self.tts_interrupted = False
+			
+			# Send tts_started event
+			self.dc_send('{"event":"tts_started"}')
+			print(f"[TTS] Synthesizing response...")
+			
+			# Stream TTS audio sentences
+			sentence_count = 0
+			async for sentence_audio in self.tts.synthesize_sentences(text):
+				# Check for interruption before processing each sentence
+				if self.tts_interrupted:
+					print(f"[TTS] Synthesis interrupted after {sentence_count} sentences")
+					break
+					
+				sentence_count += 1
+				duration = len(sentence_audio) / self.tts.get_sample_rate()
+				print(f"[TTS] Generated sentence {sentence_count}, duration: {duration:.2f}s, samples: {len(sentence_audio)}")
+				
+				# Convert sentence audio to base64 for transmission
+				import base64
+				# Ensure audio is in range [-1, 1] and convert to int16
+				sentence_audio = np.clip(sentence_audio, -1.0, 1.0)
+				audio_bytes = (sentence_audio * 32767).astype(np.int16).tobytes()
+				audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
+				
+				# Send sentence audio via DataChannel
+				self.dc_send(f'{{"event":"tts_chunk","audio":"{audio_b64}","sample_rate":{self.tts.get_sample_rate()}}}')
+			
+			# Send appropriate completion event
+			if self.tts_interrupted:
+				print(f"[TTS] Synthesis interrupted, {sentence_count} sentences generated")
+				self.dc_send('{"event":"tts_interrupted"}')
+			else:
+				print(f"[TTS] Synthesis complete, {sentence_count} sentences generated")
+				self.dc_send('{"event":"tts_complete"}')
+			
+		except Exception as e:
+			print(f"[TTS] Error: {e}")
+			# Clean error message for JSON transmission
+			error_msg = str(e).replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
+			# Remove control characters that break JSON
+			import re
+			error_msg = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', error_msg)
+			self.dc_send('{"event":"tts_error","error":"' + error_msg + '"}')
 			import traceback
 			traceback.print_exc()
