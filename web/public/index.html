@@ -8,15 +8,22 @@
 		body { font-family: system-ui, Arial, sans-serif; margin: 24px; }
 		#start { font-size: 18px; padding: 10px 16px; }
 		#log { white-space: pre-wrap; background: #f5f5f5; padding: 12px; border-radius: 6px; margin-top: 12px; }
-		#transcript { font-size: 20px; font-weight: bold; margin: 12px 0; }
+		#transcript { font-size: 20px; font-weight: bold; margin: 12px 0; color: #2c3e50; }
+		#llm-response { font-size: 18px; margin: 12px 0; padding: 12px; background: #e3f2fd; border-radius: 6px; min-height: 20px; color: #1976d2; }
+		.section-header { font-size: 14px; font-weight: bold; color: #666; margin: 8px 0 4px 0; }
 	</style>
 </head>
 <body>
 	<h1>V2VBot</h1>
 	<button id="start">Start</button>
 	<div id="status"></div>
-	<h3>Transcript</h3>
+	
+	<div class="section-header">USER (You)</div>
 	<div id="transcript"></div>
+	
+	<div class="section-header">ASSISTANT (AI)</div>
+	<div id="llm-response"></div>
+	
 	<h3>Log</h3>
 	<div id="log"></div>
 	<script src="/assets/main.js"></script>

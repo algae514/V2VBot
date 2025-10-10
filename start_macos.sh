@@ -27,6 +27,7 @@ echo "killing if a process already running at the port ..."
 # kill -9 $(lsof -ti :8000)
 
 echo "Starting V2VBot server..."
+export GEMINI_MODEL="gemini-2.0-flash"
 echo "Server will be available at: http://localhost:8000"
 echo "Press Ctrl+C to stop the server"
 

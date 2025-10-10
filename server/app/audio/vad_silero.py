@@ -5,10 +5,11 @@ from typing import Optional, Tuple
 
 
 class SileroVAD:
-	def __init__(self, model_path: str, threshold: float = 0.5, window_ms: int = 20, end_ms: int = 2000):
+	def __init__(self, model_path: str, threshold: float = 0.5, window_ms: int = 20, end_ms: int = 1500, turn_end_ms: int = 2000):
 		thr = float(os.getenv("VAD_THRESHOLD", threshold))
 		wnd = int(os.getenv("VAD_WINDOW_MS", window_ms))
 		endw = int(os.getenv("VAD_END_MS", end_ms))
+		turn_endw = int(os.getenv("VAD_TURN_END_MS", turn_end_ms))
 		try:
 			self.session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"]) if os.path.exists(model_path) else None
 		except Exception as e:
@@ -17,13 +18,17 @@ class SileroVAD:
 		self.threshold = thr
 		self.window_samples = int(16000 * wnd / 1000)
 		self.end_samples = int(16000 * endw / 1000)
+		self.turn_end_samples = int(16000 * turn_endw / 1000)
 		self._voiced_run = 0
 		self._unvoiced_run = 0
 		self.active = False
+		self._utterance_end_sent = False  # Track if we've sent utterance_end for this silence
 		
 		# Initialize LSTM state for Silero VAD: [2, batch_size, 128]
 		self._state = np.zeros((2, 1, 128), dtype=np.float32)
 		self._sample_rate = np.array(16000, dtype=np.int64)
+		
+		print(f"VAD initialized: utterance_end={endw}ms, turn_end={turn_endw}ms")
 
 	def is_ready(self) -> bool:
 		return self.session is not None
@@ -32,6 +37,7 @@ class SileroVAD:
 		self._voiced_run = 0
 		self._unvoiced_run = 0
 		self.active = False
+		self._utterance_end_sent = False
 		# Reset LSTM state
 		self._state = np.zeros((2, 1, 128), dtype=np.float32)
 
@@ -75,11 +81,26 @@ class SileroVAD:
 
 		started = False
 		ended = None
+		
+		# Detect speech start (or resume after utterance_end)
 		if not self.active and self._voiced_run >= self.window_samples:
 			self.active = True
 			started = True
-		if self.active and self._unvoiced_run >= self.end_samples:
+		elif self.active and self._utterance_end_sent and self._voiced_run >= self.window_samples:
+			# User resumed speaking after utterance_end - signal new start
+			self._utterance_end_sent = False
+			started = True
+		
+		# Two-level pause detection
+		if self.active and self._unvoiced_run >= self.turn_end_samples:
+			# Long pause (2s) - user is done talking, end of turn
 			self.active = False
-			ended = "end"
+			self._utterance_end_sent = False  # Reset for next utterance
+			ended = "turn_end"
+		elif self.active and self._unvoiced_run >= self.end_samples and not self._utterance_end_sent:
+			# Short pause (1.5s) - natural break, end of utterance
+			# Send only once, keep active=True to continue tracking for turn_end
+			self._utterance_end_sent = True
+			ended = "utterance_end"
 
 		return started, ended

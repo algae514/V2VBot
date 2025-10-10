@@ -5,6 +5,7 @@ from logging.handlers import RotatingFileHandler
 import os
 from typing import Optional
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -16,6 +17,9 @@ import time
 
 from .audio.pipeline import AudioPipeline
 from .audio.resample import resample_to_16k
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Configure logging: console + rotating file
 os.makedirs("logs", exist_ok=True)
