@@ -15,6 +15,7 @@ import numpy as np
 import time
 
 from .audio.pipeline import AudioPipeline
+from .audio.resample import resample_to_16k
 
 # Configure logging: console + rotating file
 os.makedirs("logs", exist_ok=True)
@@ -158,9 +159,12 @@ async def offer(request: Request) -> JSONResponse:
 						
 						pcm_f32 = (pcm.astype(np.float32) / 32768.0)
 						
-						# Process audio frame
-						if len(pcm_f32) > 0:
-							await pipeline.handle_audio_frame(pcm_f32, actual_sample_rate)
+						# Resample to 16kHz at ingestion point (SOC: single resampling)
+						pcm_16k = resample_to_16k(pcm_f32, actual_sample_rate)
+						
+						# Process audio frame (now always 16kHz)
+						if len(pcm_16k) > 0:
+							await pipeline.handle_audio_frame(pcm_16k)
 				except Exception as e:
 					logger.exception("audio loop error")
 					print("audio loop error", e)

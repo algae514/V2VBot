@@ -86,10 +86,41 @@ async function createPeerAndConnect(stream) {
 		log('dc message', ev.data);
 		try {
 			const msg = JSON.parse(ev.data);
-			if (msg.partial) transcriptEl.textContent = msg.partial;
-			if (msg.final) transcriptEl.textContent = msg.final;
+			
+			// Handle new event-based format
+			if (msg.event === 'turn_started') {
+				transcriptEl.textContent = '';
+				transcriptEl.style.fontStyle = 'normal';
+				transcriptEl.style.opacity = '1';
+			}
+			if (msg.event === 'turn_partial' && msg.text !== undefined) {
+				// Show partial results in lighter style
+				transcriptEl.textContent = msg.text;
+				transcriptEl.style.fontStyle = 'italic';
+				transcriptEl.style.opacity = '0.7';
+			}
+			if (msg.event === 'turn_final' && msg.text !== undefined) {
+				// Show final results in normal style
+				transcriptEl.textContent = msg.text;
+				transcriptEl.style.fontStyle = 'normal';
+				transcriptEl.style.opacity = '1';
+			}
+			
+			// Backward compatibility: handle old format
+			if (msg.partial) {
+				transcriptEl.textContent = msg.partial;
+				transcriptEl.style.fontStyle = 'italic';
+				transcriptEl.style.opacity = '0.7';
+			}
+			if (msg.final) {
+				transcriptEl.textContent = msg.final;
+				transcriptEl.style.fontStyle = 'normal';
+				transcriptEl.style.opacity = '1';
+			}
+			
 			if (msg.ok) log('server ok');
 			if (msg.audio) log('server audio', 'fps', msg.audio.fps, 'rms', msg.audio.rms);
+			if (msg.error) log('server error', msg.error);
 		} catch (e) {
 			// ignore parse errors
 		}

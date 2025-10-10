@@ -1,7 +1,6 @@
 import numpy as np
 from typing import Optional
 from faster_whisper import WhisperModel
-import scipy.signal
 from scipy.signal import butter, sosfilt
 
 
@@ -39,23 +38,28 @@ class WhisperFaster:
 		"""Check if the model is ready to use."""
 		return self.model is not None
 	
-	def _preprocess_audio(self, audio: np.ndarray, sample_rate: int) -> np.ndarray:
+	def _preprocess_audio(self, audio_16k: np.ndarray) -> np.ndarray:
 		"""
-		Preprocess audio to improve transcription quality.
+		Preprocess 16kHz audio to improve transcription quality.
 		- Remove DC offset
 		- Apply high-pass filter to remove low-frequency noise
 		- Normalize volume
 		- Apply soft limiting to prevent clipping
+		
+		Args:
+			audio_16k: Audio samples at 16kHz
+		
+		Returns:
+			Preprocessed audio at 16kHz
 		"""
-		audio = audio.astype(np.float32)
+		audio = audio_16k.astype(np.float32)
 		
 		# Remove DC offset (center around 0)
 		audio = audio - np.mean(audio)
 		
-		# High-pass filter at 80Hz to remove rumble/noise
-		if sample_rate >= 16000:
-			sos = butter(4, 80, btype='highpass', fs=sample_rate, output='sos')
-			audio = sosfilt(sos, audio).astype(np.float32)
+		# High-pass filter at 80Hz to remove rumble/noise (16kHz sample rate)
+		sos = butter(4, 80, btype='highpass', fs=16000, output='sos')
+		audio = sosfilt(sos, audio).astype(np.float32)
 		
 		# Calculate RMS for normalization
 		rms = np.sqrt(np.mean(audio ** 2))
@@ -78,13 +82,12 @@ class WhisperFaster:
 		
 		return audio
 	
-	def transcribe(self, audio: np.ndarray, sample_rate: int, language: str = "en") -> Optional[str]:
+	def transcribe(self, audio_16k: np.ndarray, language: str = "en") -> Optional[str]:
 		"""
-		Transcribe audio using Faster Whisper.
+		Transcribe 16kHz audio using Faster Whisper.
 		
 		Args:
-			audio: Audio samples as float32 numpy array
-			sample_rate: Sample rate of the audio
+			audio_16k: Audio samples as float32 numpy array at 16kHz
 			language: Language code (e.g., "en")
 		
 		Returns:
@@ -94,21 +97,14 @@ class WhisperFaster:
 			return None
 		
 		try:
-			audio = audio.astype(np.float32)
+			audio_16k = audio_16k.astype(np.float32)
 			
-			# Preprocess audio to improve quality
-			audio_clean = self._preprocess_audio(audio, sample_rate)
-			
-			# Faster-whisper expects 16kHz audio - resample if needed
-			if sample_rate != 16000:
-				num_samples_16k = int(len(audio_clean) * 16000 / sample_rate)
-				audio_16k = scipy.signal.resample(audio_clean, num_samples_16k).astype(np.float32)
-			else:
-				audio_16k = audio_clean
+			# Preprocess audio to improve quality (already at 16kHz)
+			audio_clean = self._preprocess_audio(audio_16k)
 			
 			# Transcribe
 			segments, info = self.model.transcribe(
-				audio_16k,
+				audio_clean,
 				language=language,
 				beam_size=5,
 				vad_filter=False,  # We already did VAD
