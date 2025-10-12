@@ -4,24 +4,31 @@ import numpy as np
 from typing import Optional, AsyncGenerator, List
 import time
 import logging
+import torch
 
 logger = logging.getLogger(__name__)
 
 
 class MeloTTS:
     """
-    MeloTTS-English v3 text-to-speech synthesis with streaming support.
+    MeloTTS-English v3 text-to-speech synthesis with streaming support and GPU acceleration.
     """
     
-    def __init__(self, device: str = "cpu", language: str = "EN"):
+    def __init__(self, device: str = None, language: str = "EN"):
         """
-        Initialize MeloTTS model.
+        Initialize MeloTTS model with automatic GPU detection.
         
         Args:
-            device: Device to run on ('cpu' or 'cuda')
+            device: Device to run on ('cpu' or 'cuda', auto-detects if None)
             language: Language code ('EN' for English)
         """
-        self.device = device
+        # Auto-detect GPU availability
+        if device is None:
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+            print(f"[TTS] Auto-detected device: {self.device}")
+        else:
+            self.device = device
+        
         self.language = language
         self.model = None
         self.speaker_id = None
@@ -32,13 +39,19 @@ class MeloTTS:
         asyncio.create_task(self._initialize_model())
     
     async def _initialize_model(self):
-        """Initialize the MeloTTS model asynchronously."""
+        """Initialize the MeloTTS model asynchronously with GPU support."""
         try:
             # Import MeloTTS here to avoid blocking startup
             from melo.api import TTS
             
-            print(f"[TTS] Loading MeloTTS-English model...")
+            print(f"[TTS] Loading MeloTTS-English model on {self.device}...")
             start_time = time.time()
+            
+            # Show GPU info if available
+            if self.device == "cuda" and torch.cuda.is_available():
+                gpu_name = torch.cuda.get_device_name(0)
+                gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1024**3
+                print(f"[TTS] GPU detected: {gpu_name} ({gpu_memory:.2f} GB)")
             
             # Run model loading in thread pool to avoid blocking
             loop = asyncio.get_running_loop()
@@ -57,13 +70,34 @@ class MeloTTS:
                 raise ValueError("No speakers available in MeloTTS model")
             
             elapsed = time.time() - start_time
-            print(f"[TTS] MeloTTS model loaded in {elapsed:.2f}s")
+            print(f"[TTS] MeloTTS model loaded on {self.device} in {elapsed:.2f}s")
             self.is_ready_flag = True
             
         except Exception as e:
-            print(f"[TTS] Failed to load MeloTTS model: {e}")
+            print(f"[TTS] Failed to load MeloTTS model on {self.device}: {e}")
             logger.exception("MeloTTS initialization failed")
-            self.is_ready_flag = False
+            
+            # Fallback to CPU if GPU fails
+            if self.device == "cuda":
+                print("[TTS] Falling back to CPU...")
+                self.device = "cpu"
+                try:
+                    from melo.api import TTS
+                    loop = asyncio.get_running_loop()
+                    self.model = await loop.run_in_executor(
+                        None, 
+                        lambda: TTS(language=self.language, device=self.device)
+                    )
+                    speaker_ids = self.model.hps.data.spk2id
+                    if speaker_ids:
+                        self.speaker_id = list(speaker_ids.values())[0]
+                    print(f"[TTS] MeloTTS model loaded on CPU (fallback)")
+                    self.is_ready_flag = True
+                except Exception as e2:
+                    print(f"[TTS] CPU fallback also failed: {e2}")
+                    self.is_ready_flag = False
+            else:
+                self.is_ready_flag = False
     
     def is_ready(self) -> bool:
         """Check if TTS model is ready."""

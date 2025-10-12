@@ -5,13 +5,37 @@ from typing import Optional, Tuple
 
 
 class SileroVAD:
-	def __init__(self, model_path: str, threshold: float = 0.5, window_ms: int = 20, end_ms: int = 1500, turn_end_ms: int = 2000):
+	def __init__(self, model_path: str, threshold: float = 0.5, window_ms: int = 20, end_ms: int = 1500, turn_end_ms: int = 2000, use_gpu: bool = None):
 		thr = float(os.getenv("VAD_THRESHOLD", threshold))
 		wnd = int(os.getenv("VAD_WINDOW_MS", window_ms))
 		endw = int(os.getenv("VAD_END_MS", end_ms))
 		turn_endw = int(os.getenv("VAD_TURN_END_MS", turn_end_ms))
+		
+		# Auto-detect GPU availability if not specified
+		if use_gpu is None:
+			use_gpu = os.getenv("USE_GPU", "true").lower() in ("true", "1", "yes")
+		
+		# Setup ONNX Runtime providers with GPU support
+		providers = []
+		if use_gpu:
+			# Try CUDA provider first
+			available_providers = ort.get_available_providers()
+			if "CUDAExecutionProvider" in available_providers:
+				providers.append("CUDAExecutionProvider")
+				print("Using CUDA for Silero VAD")
+			else:
+				print("CUDA not available for ONNX, using CPU for VAD")
+		
+		# Always add CPU as fallback
+		providers.append("CPUExecutionProvider")
+		
 		try:
-			self.session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"]) if os.path.exists(model_path) else None
+			if os.path.exists(model_path):
+				self.session = ort.InferenceSession(model_path, providers=providers)
+				actual_provider = self.session.get_providers()[0]
+				print(f"Silero VAD loaded with provider: {actual_provider}")
+			else:
+				self.session = None
 		except Exception as e:
 			print(f"Failed to load Silero VAD model: {e}")
 			self.session = None

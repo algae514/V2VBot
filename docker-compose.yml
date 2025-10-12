@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  v2vbot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: v2vbot:latest
+    container_name: v2vbot
+    ports:
+      - "8080:8080"
+    environment:
+      # GPU Configuration
+      - USE_GPU=true
+      - CUDA_VISIBLE_DEVICES=0
+      
+      # API Keys (set these in .env file)
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      
+      # Model Configuration
+      - GEMINI_MODEL=gemini-2.0-flash
+      
+      # VAD Configuration
+      - VAD_THRESHOLD=0.5
+      - VAD_WINDOW_MS=20
+      - VAD_END_MS=1500
+      - VAD_TURN_END_MS=2000
+      - VAD_ENERGY_FALLBACK=0.05
+    volumes:
+      # Persist models directory to avoid re-downloading
+      - ./models:/app/models
+      # Persist logs
+      - ./logs:/app/logs
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+

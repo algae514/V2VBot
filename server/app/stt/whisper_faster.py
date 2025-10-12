@@ -1,38 +1,83 @@
 import numpy as np
+import os
 from typing import Optional
 from faster_whisper import WhisperModel
 from scipy.signal import butter, sosfilt
+import torch
 
 
 class WhisperFaster:
-	def __init__(self, model_size: str = "small.en", device: str = "cpu", compute_type: str = "int8"):
+	def __init__(self, model_size: str = "small.en", device: str = None, compute_type: str = None):
 		"""
-		Initialize Faster Whisper model.
+		Initialize Faster Whisper model with automatic GPU detection.
 		
 		Args:
 			model_size: Model size (tiny.en, base.en, small.en, medium.en, large-v3)
-			device: "cpu" or "cuda"
-			compute_type: "int8", "int8_float16", "float16", "float32"
+			device: "cpu" or "cuda" (auto-detects if None)
+			compute_type: "int8", "int8_float16", "float16", "float32" (auto-selects if None)
 		"""
 		self.model_size = model_size
-		self.device = device
-		self.compute_type = compute_type
+		
+		# Auto-detect GPU availability
+		if device is None:
+			self.device = "cuda" if torch.cuda.is_available() else "cpu"
+			print(f"Auto-detected device: {self.device}")
+		else:
+			self.device = device
+		
+		# Auto-select compute type based on device
+		if compute_type is None:
+			if self.device == "cuda":
+				# Use float16 for GPU for best performance
+				self.compute_type = "float16"
+			else:
+				# Use int8 for CPU for efficiency
+				self.compute_type = "int8"
+			print(f"Auto-selected compute type: {self.compute_type}")
+		else:
+			self.compute_type = compute_type
+		
 		self.model = None
 		self._load_model()
 	
 	def _load_model(self) -> None:
-		"""Load the Faster Whisper model."""
+		"""Load the Faster Whisper model with GPU support."""
 		try:
-			print(f"Loading Whisper model: {self.model_size}")
+			print(f"Loading Whisper model: {self.model_size} on {self.device} with {self.compute_type}")
+			
+			# Show GPU info if available
+			if self.device == "cuda" and torch.cuda.is_available():
+				gpu_name = torch.cuda.get_device_name(0)
+				gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1024**3
+				print(f"GPU detected: {gpu_name} ({gpu_memory:.2f} GB)")
+			
 			self.model = WhisperModel(
 				self.model_size,
 				device=self.device,
-				compute_type=self.compute_type
+				compute_type=self.compute_type,
+				# Enable GPU optimizations
+				num_workers=1 if self.device == "cuda" else 4
 			)
-			print(f"✓ Whisper model ready")
+			print(f"✓ Whisper model ready on {self.device}")
 		except Exception as e:
 			print(f"Failed to load Whisper model: {e}")
-			self.model = None
+			# Fallback to CPU if GPU fails
+			if self.device == "cuda":
+				print("Falling back to CPU...")
+				self.device = "cpu"
+				self.compute_type = "int8"
+				try:
+					self.model = WhisperModel(
+						self.model_size,
+						device=self.device,
+						compute_type=self.compute_type
+					)
+					print(f"✓ Whisper model ready on CPU (fallback)")
+				except Exception as e2:
+					print(f"CPU fallback also failed: {e2}")
+					self.model = None
+			else:
+				self.model = None
 	
 	def is_ready(self) -> bool:
 		"""Check if the model is ready to use."""

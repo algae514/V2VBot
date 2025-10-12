@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Logs
+logs/*.log
+debug_audio/*.wav
+
+# Documentation (keep in repo, not needed in container)
+docs/
+
+# Installation scripts
+install.sh
+install.ps1
+start.sh
+start.ps1
+start_macos.sh
+
+# Environment files (will be provided at runtime)
+.env
+.env.local
+
