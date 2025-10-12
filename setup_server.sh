@@ -43,8 +43,16 @@ echo ""
 # 2. Check GPU
 print_info "Checking GPU..."
 if command -v nvidia-smi &> /dev/null; then
-    nvidia-smi --query-gpu=name,memory.total,driver_version,cuda_version --format=csv,noheader
-    print_success "GPU detected"
+    # Try the full query first, fallback to basic info if it fails
+    if nvidia-smi --query-gpu=name,memory.total,driver_version,cuda_version --format=csv,noheader 2>/dev/null; then
+        print_success "GPU detected with CUDA info"
+    elif nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader 2>/dev/null; then
+        print_success "GPU detected (basic info)"
+    else
+        # Fallback to basic nvidia-smi
+        nvidia-smi
+        print_success "GPU detected (basic output)"
+    fi
 else
     print_error "nvidia-smi not found. GPU may not be available."
 fi
