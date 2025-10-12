@@ -30,8 +30,7 @@ print_info() {
 
 # Check if running as root
 if [ "$EUID" -eq 0 ]; then 
-    print_error "Please do not run as root. Run as regular user with sudo privileges."
-    exit 1
+    print_info "Running as root user - this is fine for RunPod environments"
 fi
 
 # 1. System Information
@@ -244,7 +243,7 @@ After=network.target
 
 [Service]
 Type=simple
-User=$(whoami)
+User=root
 WorkingDirectory=$APP_DIR
 Environment="PATH=$APP_DIR/venv/bin:/usr/local/bin:/usr/bin:/bin"
 ExecStart=$APP_DIR/venv/bin/python -m uvicorn server.app.main:app --host 0.0.0.0 --port 8080 --workers 1
