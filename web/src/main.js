@@ -7,11 +7,16 @@ const startBtn = document.getElementById('start');
 let pc;
 let dc;
 let micStream;
+let micTrack = null; // Microphone track for muting
 let statsTimer = null;
 let audioContext = null;
 let audioQueue = [];
 let isPlayingAudio = false;
 let currentAudioSource = null; // Track current playing audio for interruption
+let audioCleanupTimer = null; // Timer for cleanup
+let maxAudioQueueSize = 5; // Prevent memory buildup
+let audioGainNode = null; // Gain node for immediate volume control
+let isInterrupted = false; // Flag to track interruption state
 
 function log(...args) {
 	const line = args.map(String).join(' ');
@@ -24,15 +29,41 @@ function log(...args) {
 
 async function initAudioContext() {
 	if (!audioContext) {
-		audioContext = new (window.AudioContext || window.webkitAudioContext)();
-		log('🎵 Audio context initialized');
+		try {
+			audioContext = new (window.AudioContext || window.webkitAudioContext)();
+			
+			// Create gain node for immediate volume control
+			audioGainNode = audioContext.createGain();
+			audioGainNode.connect(audioContext.destination);
+			
+			log('🎵 Audio context initialized with gain control');
+		} catch (error) {
+			log('❌ Failed to initialize audio context:', error);
+			throw error;
+		}
 	}
+	
+	// Resume context if suspended
+	if (audioContext.state === 'suspended') {
+		try {
+			await audioContext.resume();
+		} catch (error) {
+			log('❌ Failed to resume audio context:', error);
+		}
+	}
+	
 	return audioContext;
 }
 
 async function playAudioChunk(audioData, sampleRate) {
 	try {
 		const ctx = await initAudioContext();
+		
+		// Check for interruption before starting
+		if (isInterrupted) {
+			log('🔇 Audio playback cancelled due to interruption');
+			return;
+		}
 		
 		// Convert base64 to ArrayBuffer
 		const binaryString = atob(audioData);
@@ -54,19 +85,59 @@ async function playAudioChunk(audioData, sampleRate) {
 		// Play audio and return promise that resolves when finished
 		const source = ctx.createBufferSource();
 		source.buffer = audioBuffer;
-		source.connect(ctx.destination);
+		
+		// Connect through gain node for immediate volume control
+		source.connect(audioGainNode);
 		
 		// Track current audio source for interruption
 		currentAudioSource = source;
 		
 		return new Promise((resolve) => {
+			// Set up interruption monitoring
+			const checkInterruption = () => {
+				if (isInterrupted) {
+					log('🔇 Audio playback interrupted during playback');
+					try {
+						source.stop();
+						source.disconnect();
+					} catch (error) {
+						// Ignore errors
+					}
+					currentAudioSource = null;
+					resolve();
+					return true;
+				}
+				return false;
+			};
+			
 			source.onended = () => {
 				log(`🔊 Finished playing audio chunk: ${audioBuffer.length} samples at ${sampleRate}Hz`);
 				currentAudioSource = null;
 				resolve();
 			};
+			
+			// Check for interruption right before starting
+			if (checkInterruption()) {
+				return;
+			}
+			
 			source.start();
 			log(`🔊 Playing audio chunk: ${audioBuffer.length} samples at ${sampleRate}Hz`);
+			
+			// Monitor for interruption during playback (check every 50ms)
+			const interruptionMonitor = setInterval(() => {
+				if (checkInterruption()) {
+					clearInterval(interruptionMonitor);
+				}
+			}, 50);
+			
+			// Clean up monitor when audio ends
+			source.onended = () => {
+				clearInterval(interruptionMonitor);
+				log(`🔊 Finished playing audio chunk: ${audioBuffer.length} samples at ${sampleRate}Hz`);
+				currentAudioSource = null;
+				resolve();
+			};
 		});
 		
 	} catch (error) {
@@ -76,20 +147,104 @@ async function playAudioChunk(audioData, sampleRate) {
 }
 
 function interruptAudioPlayback() {
+	// Set interruption flag immediately
+	isInterrupted = true;
+	
+	// IMMEDIATE: Set volume to 0 using gain node (instant silence)
+	if (audioGainNode) {
+		audioGainNode.gain.setValueAtTime(0, audioContext.currentTime);
+		log('🔇 Audio volume set to 0 (immediate silence)');
+	}
+	
+	// Unmute microphone immediately for user input
+	unmuteMicrophone();
+	
+	// Stop current audio source IMMEDIATELY
 	if (currentAudioSource) {
 		try {
 			currentAudioSource.stop();
-			log('🔇 Interrupted current audio playback');
+			currentAudioSource.disconnect(); // Properly disconnect
+			log('🔇 Stopped and disconnected current audio source');
 		} catch (error) {
 			// Audio source might already be stopped
 		}
 		currentAudioSource = null;
 	}
 	
-	// Clear audio queue
-	audioQueue = [];
+	// Clear audio queue completely
+	audioQueue.length = 0; // More efficient than reassignment
 	isPlayingAudio = false;
-	log('🔇 Cleared audio queue and stopped playback');
+	
+	// Clear any pending cleanup timers
+	if (audioCleanupTimer) {
+		clearTimeout(audioCleanupTimer);
+		audioCleanupTimer = null;
+	}
+	
+	log('🔇 Audio interruption complete - immediate silence');
+}
+
+function cleanupAudioResources() {
+	// Clear any remaining audio sources
+	if (currentAudioSource) {
+		try {
+			currentAudioSource.stop();
+			currentAudioSource.disconnect();
+		} catch (error) {
+			// Ignore errors
+		}
+		currentAudioSource = null;
+	}
+	
+	// Clear queue
+	audioQueue.length = 0;
+	isPlayingAudio = false;
+	isInterrupted = false; // Reset interruption flag
+	
+	// Clear timers
+	if (audioCleanupTimer) {
+		clearTimeout(audioCleanupTimer);
+		audioCleanupTimer = null;
+	}
+	
+	// Reset volume to normal
+	if (audioGainNode) {
+		audioGainNode.gain.setValueAtTime(1.0, audioContext.currentTime);
+	}
+	
+	// Unmute microphone
+	unmuteMicrophone();
+	
+	log('🧹 Audio resources cleaned up');
+}
+
+function resetAudioForNewPlayback() {
+	// Reset interruption flag for new TTS
+	isInterrupted = false;
+	
+	// Reset volume to normal
+	if (audioGainNode) {
+		audioGainNode.gain.setValueAtTime(1.0, audioContext.currentTime);
+	}
+	
+	// Mute microphone during TTS to prevent interference
+	muteMicrophone();
+	
+	log('🔄 Audio reset for new playback');
+}
+
+function muteMicrophone() {
+	if (micTrack) {
+		micTrack.enabled = false;
+		log('🔇 Microphone muted during TTS');
+	}
+}
+
+function unmuteMicrophone() {
+	if (micTrack) {
+		micTrack.enabled = true;
+		log('🎤 Microphone unmuted');
+	}
 }
 
 async function processAudioQueue() {
@@ -98,23 +253,65 @@ async function processAudioQueue() {
 	isPlayingAudio = true;
 	log(`🎵 Starting sequential audio playback: ${audioQueue.length} sentences queued`);
 	
-	while (audioQueue.length > 0 && isPlayingAudio) {
+	// Process queue with frequent interruption checking
+	while (audioQueue.length > 0 && isPlayingAudio && !isInterrupted) {
 		const { audioData, sampleRate } = audioQueue.shift();
+		
+		// Check interruption before playing each chunk
+		if (isInterrupted) {
+			log('🔇 Playback interrupted before chunk');
+			break;
+		}
+		
 		try {
 			await playAudioChunk(audioData, sampleRate);
 		} catch (error) {
 			log('❌ Error playing audio chunk:', error);
+			// Continue with next chunk instead of stopping
 		}
+		
+		// Check interruption after each chunk
+		if (isInterrupted) {
+			log('🔇 Playback interrupted after chunk');
+			break;
+		}
+		
+		// Minimal delay to prevent blocking the main thread
+		await new Promise(resolve => setTimeout(resolve, 5));
 	}
 	
 	isPlayingAudio = false;
 	log('🎵 Finished sequential audio playback');
+	
+	// Schedule cleanup after a delay
+	if (audioCleanupTimer) {
+		clearTimeout(audioCleanupTimer);
+	}
+	audioCleanupTimer = setTimeout(() => {
+		cleanupAudioResources();
+	}, 5000); // Clean up after 5 seconds of inactivity
 }
 
 function onUnhandledRejection(ev) {
 	log('unhandledrejection', ev.reason || 'unknown');
 }
 window.addEventListener('unhandledrejection', onUnhandledRejection);
+
+// Cleanup on page unload
+window.addEventListener('beforeunload', () => {
+	cleanupAudioResources();
+	if (audioContext && audioContext.state !== 'closed') {
+		audioContext.close();
+	}
+});
+
+// Cleanup on visibility change (when tab becomes hidden)
+document.addEventListener('visibilitychange', () => {
+	if (document.hidden) {
+		// Page is hidden, clean up resources
+		cleanupAudioResources();
+	}
+});
 
 async function startSenderStats() {
 	if (!pc) return;
@@ -163,6 +360,11 @@ async function createPeerAndConnect(stream) {
 	for (const track of stream.getAudioTracks()) {
 		log('addTrack', track.kind);
 		pc.addTrack(track, stream);
+		
+		// Store microphone track reference for muting
+		if (track.kind === 'audio') {
+			micTrack = track;
+		}
 	}
 
 	pc.ontrack = (e) => {
@@ -196,8 +398,8 @@ async function createPeerAndConnect(stream) {
 			transcriptEl.style.opacity = '1';
 			transcriptEl.style.color = '';
 			
-			// Interrupt audio playback when user starts speaking
-			if (isPlayingAudio) {
+			// PRIORITY: Interrupt audio playback immediately when user starts speaking
+			if (isPlayingAudio || audioQueue.length > 0) {
 				log('🔇 User started speaking - interrupting audio playback');
 				interruptAudioPlayback();
 			}
@@ -263,14 +465,21 @@ async function createPeerAndConnect(stream) {
 		// Handle TTS events
 		if (msg.event === 'tts_started') {
 			log('🎵 TTS synthesis started');
+			resetAudioForNewPlayback(); // Reset for new TTS
 		}
 		if (msg.event === 'tts_chunk' && msg.audio && msg.sample_rate) {
+			// Prevent memory buildup by limiting queue size
+			if (audioQueue.length >= maxAudioQueueSize) {
+				log(`⚠️ Audio queue full (${maxAudioQueueSize}), dropping oldest chunk`);
+				audioQueue.shift(); // Remove oldest chunk
+			}
+			
 			// Queue sentence audio for sequential playback
 			audioQueue.push({
 				audioData: msg.audio,
 				sampleRate: msg.sample_rate
 			});
-			log(`🎵 TTS sentence queued: ${msg.audio.length} bytes at ${msg.sample_rate}Hz`);
+			log(`🎵 TTS sentence queued: ${msg.audio.length} bytes at ${msg.sample_rate}Hz (queue: ${audioQueue.length})`);
 			
 			// Process audio queue (will play sentences sequentially)
 			processAudioQueue();

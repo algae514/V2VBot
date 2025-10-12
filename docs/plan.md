@@ -3,18 +3,18 @@
 ## Goals
 - Ultra-low-latency, full-duplex voice assistant with streaming E2E (WebRTC).
 - CPU-first local development (Ryzen 7, 32 GB RAM); upgradeable to GPU later.
-- Components: Whisper (faster-whisper) for STT, Gemini for LLM, OpenVoice for TTS, Silero VAD + endpointing for turn detection, barge-in support.
+- Components: Whisper (faster-whisper) for STT, Gemini for LLM, MeloTTS-English v3 for TTS, Silero VAD + endpointing for turn detection, barge-in support.
 
 ## Phases
-1. MVP
-   - WebRTC pipeline (audio up/down + DataChannel).
-   - Streaming STT partials, endpointing/finals.
-   - Gemini streaming with partial tokens.
-   - OpenVoice chunked TTS streaming.
-   - Barge-in: detect mic speech during TTS → cancel TTS and LLM.
-2. Latency & UX Tuning
-   - VAD/endpoint thresholds, adaptive energy, faster chunking.
-   - TTS chunk segmentation by punctuation/pauses; overlap/crossfade.
+1. MVP ✅ COMPLETE
+   - WebRTC pipeline (audio up/down + DataChannel) ✅
+   - Streaming STT partials, endpointing/finals ✅
+   - Gemini streaming with partial tokens ✅
+   - MeloTTS-English v3 sentence-based TTS streaming ✅
+   - Barge-in: detect mic speech during TTS → cancel TTS and LLM ✅
+2. Latency & UX Tuning ✅ COMPLETE
+   - VAD/endpoint thresholds implemented (1.5s utterance, 2s turn end).
+   - TTS sentence-based streaming with sequential playback implemented.
 3. Reliability & Ops
    - STUN/TURN fallback, reconnection.
    - Metrics/observability (latency budget per stage), health checks.

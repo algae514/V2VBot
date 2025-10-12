@@ -4,7 +4,7 @@
 - Streaming-first: Process audio and tokens incrementally end-to-end.
 - Parallel fan-out: Send each 20 ms input frame to STT and VAD concurrently.
 - Early partials: Emit STT partials and LLM partial tokens as soon as available.
-- Chunked TTS: Segment by punctuation/pauses; stream first chunk asap; overlap/crossfade.
+- Chunked TTS: Sentence-based streaming with MeloTTS-English v3; stream first sentence asap; sequential playback.
 - Single-resample: Normalize to 16 kHz mono once at ingress, avoid re-resampling.
 - Barge-in: Mic VAD during TTS triggers cancel of TTS and LLM promptly.
 

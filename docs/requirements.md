@@ -5,7 +5,7 @@
 - Streaming STT (Whisper via faster-whisper or whisper.cpp) with partial and final transcripts.
 - Turn detection using WebRTC VAD + endpointing for end-of-utterance and barge-in detection.
 - LLM integration (Gemini) with streaming partial tokens.
-- TTS synthesis (OpenVoice) with chunked output and streaming playback.
+- TTS synthesis (MeloTTS-English v3) with sentence-based streaming and chunked output.
 - Barge-in: new user speech interrupts TTS and cancels ongoing LLM/TTS pipeline.
 - Minimal UI: one button to start, live transcript, speaking indicator, latency metrics.
 
