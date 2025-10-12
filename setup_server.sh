@@ -60,13 +60,13 @@ echo ""
 
 # 3. Update system packages
 print_info "Updating system packages..."
-sudo apt-get update -qq
+apt-get update -qq
 print_success "System packages updated"
 echo ""
 
 # 4. Install system dependencies
 print_info "Installing system dependencies..."
-sudo apt-get install -y -qq \
+apt-get install -y -qq \
     python3 \
     python3-pip \
     python3-venv \
@@ -264,8 +264,8 @@ StandardError=append:$APP_DIR/logs/server.log
 WantedBy=multi-user.target
 EOF
 
-sudo mv /tmp/v2vbot.service /etc/systemd/system/v2vbot.service
-sudo systemctl daemon-reload
+mv /tmp/v2vbot.service /etc/systemd/system/v2vbot.service
+systemctl daemon-reload
 print_success "Systemd service created"
 echo ""
 
