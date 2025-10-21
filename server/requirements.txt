@@ -23,8 +23,9 @@ transformers>=4.27.0
 torch>=2.1.0
 torchaudio>=2.1.0
 
-# ONNX Runtime with CUDA support for Silero VAD
-onnxruntime-gpu>=1.16.0
+# ONNX Runtime for Silero VAD
+# Note: Use CPU version for ARM64 compatibility, GPU version not available for ARM64
+onnxruntime>=1.16.0
 
 # CTranslate2 with CUDA support for Faster-Whisper
 # Note: faster-whisper will automatically use GPU if available

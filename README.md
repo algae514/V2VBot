@@ -23,8 +23,8 @@ A real-time voice-to-voice conversational AI system with GPU acceleration, optim
 - Optimized audio processing pipeline
 
 🎯 **Production Ready**
-- Docker deployment with GPU support
-- RunPod optimized with startup scripts
+- Docker Hub deployment with GPU support
+- RunPod and VastAI optimized with startup scripts
 - Comprehensive monitoring and logging
 - Graceful error handling and fallbacks
 
@@ -48,14 +48,22 @@ nano .env  # Add GEMINI_API_KEY
 python -m uvicorn server.app.main:app --host 0.0.0.0 --port 8080
 ```
 
-### Docker Deployment
+### Docker Hub Deployment
 
+See [DOCKER_HUB_DEPLOYMENT.md](DOCKER_HUB_DEPLOYMENT.md) for detailed Docker Hub deployment instructions.
+
+Quick deploy:
 ```bash
-# Build and run
-docker-compose up -d
+# Set your Docker Hub username
+export DOCKER_USERNAME="your-dockerhub-username"
 
-# View logs
-docker-compose logs -f
+# Run deployment script
+chmod +x deploy_dockerhub.sh
+./deploy_dockerhub.sh
+
+# Or manually build and push
+docker build -f Dockerfile.dockerhub -t $DOCKER_USERNAME/v2vbot:latest .
+docker push $DOCKER_USERNAME/v2vbot:latest
 ```
 
 ### RunPod Deployment
@@ -70,6 +78,26 @@ cd V2VBot
 cp env.example .env
 nano .env  # Add GEMINI_API_KEY
 bash start_runpod.sh
+```
+
+### VastAI Deployment
+
+See [VASTAI_DEPLOYMENT.md](VASTAI_DEPLOYMENT.md) for detailed VastAI setup instructions.
+
+Quick deploy:
+```bash
+# Clone repository
+git clone <repo-url> V2VBot
+cd V2VBot
+
+# Configure environment
+cp env.example .env
+nano .env  # Add GEMINI_API_KEY
+
+# Run setup and start
+chmod +x setup_server.sh start_vastai.sh
+./setup_server.sh
+./start_vastai.sh
 ```
 
 ## System Requirements
@@ -131,7 +159,9 @@ VAD_TURN_END_MS=2000   # Turn end pause
 
 ## Documentation
 
+- **[Docker Hub Deployment](DOCKER_HUB_DEPLOYMENT.md)**: Deploy to Docker Hub
 - **[Deployment Guide](DEPLOYMENT.md)**: Quick start for RunPod
+- **[VastAI Deployment](VASTAI_DEPLOYMENT.md)**: Quick start for VastAI
 - **[GPU Deployment](docs/gpu-deployment.md)**: Comprehensive GPU setup
 - **[Architecture](docs/architecture-rules.md)**: System design principles
 - **[Current Status](docs/current-status.md)**: Implementation status
@@ -155,8 +185,11 @@ V2VBot/
 ├── models/              # Model files (cached)
 ├── docs/                # Documentation
 ├── Dockerfile           # Docker build
+├── Dockerfile.dockerhub # Docker Hub optimized build
 ├── docker-compose.yml   # Docker orchestration
 ├── start_runpod.sh     # RunPod startup script
+├── start_vastai.sh     # VastAI startup script
+├── deploy_dockerhub.sh # Docker Hub deployment script
 └── env.example          # Environment template
 ```
 
@@ -234,7 +267,9 @@ Contributions welcome! Please:
 - [x] Voice-to-voice pipeline
 - [x] GPU acceleration
 - [x] Docker deployment
+- [x] Docker Hub deployment
 - [x] RunPod support
+- [x] VastAI support
 - [ ] Metrics and monitoring
 - [ ] Multi-language support
 - [ ] Model quantization

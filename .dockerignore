@@ -1,17 +1,54 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Documentation
+*.md
+docs/
+README.md
+DEPLOYMENT.md
+VASTAI_DEPLOYMENT.md
+GPU_SETUP_SUMMARY.md
+MANUAL_DEPLOYMENT.md
+RUNPOD_STEPS.md
+USER_SETUP_GUIDE.md
+
+# Logs
+logs/
+*.log
+
 # Python
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
-*.egg-info/
-dist/
 build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
 
 # Virtual environments
 venv/
+.venv/
 env/
+.env/
 ENV/
+env.bak/
+venv.bak/
 
 # IDE
 .vscode/
@@ -22,27 +59,48 @@ ENV/
 
 # OS
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
 
-# Git
-.git/
-.gitignore
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore
 
-# Logs
-logs/*.log
-debug_audio/*.wav
+# Scripts (keep only essential ones)
+*.sh
+!start_docker.sh
+!setup_server.sh
+!start_vastai.sh
 
-# Documentation (keep in repo, not needed in container)
-docs/
+# Debug
+debug_audio/
+*.wav
+*.mp3
+*.m4a
 
-# Installation scripts
-install.sh
-install.ps1
-start.sh
-start.ps1
-start_macos.sh
+# Temporary files
+*.tmp
+*.temp
+.cache/
 
-# Environment files (will be provided at runtime)
+# Model files (will be downloaded during build)
+models/*.bin
+models/*.onnx
+models/*.pt
+models/*.pth
+
+# Environment files (will be created at runtime)
 .env
 .env.local
+.env.production
 
+# Test files
+test/
+tests/
+*_test.py
+test_*.py

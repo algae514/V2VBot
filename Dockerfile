@@ -1,5 +1,5 @@
-# V2VBot Dockerfile for RunPod GPU Deployment
-# Optimized for RTX 2000 Ada with CUDA 12.1
+# V2VBot Dockerfile for VastAI GPU Deployment
+# Optimized for GPU acceleration with CUDA 12.1
 
 FROM nvidia/cuda:12.1.0-cudnn8-runtime-ubuntu22.04
 
@@ -39,23 +39,16 @@ RUN pip3 install --no-cache-dir --upgrade pip setuptools wheel && \
 # Copy application code
 COPY server/ /app/server/
 COPY web/ /app/web/
-COPY models/ /app/models/
 
-# Create necessary directories
-RUN mkdir -p /app/logs /app/debug_audio
-
-# Download and prepare models (if not already in models/)
-WORKDIR /app/models
-RUN if [ ! -f "silero_vad.onnx" ]; then \
-        wget -q https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx; \
-    fi && \
+# Create necessary directories (models will be downloaded during server setup)
+RUN mkdir -p /app/logs /app/debug_audio /app/models && \
     if [ ! -f "ggml-small.en.bin" ]; then \
         echo "Whisper models will be downloaded on first run"; \
     fi
 
 WORKDIR /app
 
-# Expose port
+# Expose port (VastAI typically uses port 8080)
 EXPOSE 8080
 
 # Health check

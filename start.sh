@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
+# V2VBot Start Script for VastAI
 set -euo pipefail
 
 PIDFILE=.uvicorn.pid
 HOST=0.0.0.0
-PORT=8000
+PORT=8080
 APP=server.app.main:app
 
 # Activate venv if present
-if [ -d .venv ]; then
+if [ -d venv ]; then
+	# shellcheck disable=SC1091
+	source venv/bin/activate
+elif [ -d .venv ]; then
 	# shellcheck disable=SC1091
 	source .venv/bin/activate
 fi
@@ -25,8 +29,9 @@ if [ -f "$PIDFILE" ]; then
 fi
 
 # Start new server
-uvicorn "$APP" --host "$HOST" --port "$PORT" --reload &
+uvicorn "$APP" --host "$HOST" --port "$PORT" --workers 1 &
 NEWPID=$!
 echo $NEWPID > "$PIDFILE"
-echo "Server started at http://$HOST:$PORT (PID $NEWPID)"
+echo "V2VBot server started at http://$HOST:$PORT (PID $NEWPID)"
+echo "Check your VastAI dashboard for the public URL"
 

@@ -1,11 +1,11 @@
 #!/bin/bash
-# V2VBot Server Setup Script (Non-Docker)
-# Run this script after SSH into your RunPod server
+# V2VBot Server Setup Script for VastAI
+# Run this script after SSH into your VastAI server
 
 set -e
 
 echo "=========================================="
-echo "V2VBot Server Setup (Non-Docker)"
+echo "V2VBot Server Setup for VastAI"
 echo "=========================================="
 echo ""
 
@@ -30,7 +30,14 @@ print_info() {
 
 # Check if running as root
 if [ "$EUID" -eq 0 ]; then 
-    print_info "Running as root user - this is fine for RunPod environments"
+    print_info "Running as root user - this is fine for VastAI environments"
+    # Create a non-root user for running the application
+    if ! id "v2vbot" &>/dev/null; then
+        print_info "Creating v2vbot user..."
+        useradd -m -s /bin/bash v2vbot
+        usermod -aG sudo v2vbot
+        print_success "v2vbot user created"
+    fi
 fi
 
 # 1. System Information
@@ -119,7 +126,7 @@ else
     print_info "Cloning repository..."
     print_error "Please clone your repository manually:"
     echo "  cd /workspace"
-    echo "  git clone <your-repo-url> V2VBot"
+    echo "  git clone https://github.com/yourusername/V2VBot.git V2VBot"
     echo ""
     echo "After cloning, run this script again or continue with manual setup."
     exit 0
@@ -295,7 +302,7 @@ echo "   # Or if using systemd:"
 echo "   sudo journalctl -u v2vbot -f"
 echo ""
 echo "4. Access your application:"
-echo "   Check your RunPod dashboard for the public URL"
+echo "   Check your VastAI dashboard for the public URL"
 echo "   Port: 8080"
 echo ""
 echo "📊 Useful Commands:"
