@@ -134,10 +134,13 @@ async def offer(request: Request) -> JSONResponse:
 				is_stereo = False
 				try:
 					while True:
+						frame_start = time.time()
 						frame = await track.recv()
+						frame_receive_latency = (time.time() - frame_start) * 1000
 						
 						# Detect sample rate and channel config from first frame
 						if actual_sample_rate is None:
+							detect_start = time.time()
 							reported_rate = frame.sample_rate
 							samples_per_frame = frame.samples
 							test_array = frame.to_ndarray().astype(np.int16).reshape(-1)
@@ -153,26 +156,44 @@ async def offer(request: Request) -> JSONResponse:
 								actual_sample_rate = int(actual_samples_in_frame / 0.020)
 								logger.info(f"Audio: {actual_sample_rate}Hz, MONO")
 							
+							detect_latency = (time.time() - detect_start) * 1000
+							logger.info(f"[LATENCY] Audio detection: {detect_latency:.2f}ms")
+							
 							# Skip first frame (used for detection)
 							continue
 						
+						process_start = time.time()
 						pcm = frame.to_ndarray().astype(np.int16)
 						pcm = pcm.reshape(-1)
+						to_ndarray_latency = (time.time() - process_start) * 1000
 						
 						# Convert stereo to mono if needed
+						stereo_start = time.time()
 						if is_stereo:
 							left = pcm[::2]
 							right = pcm[1::2]
 							pcm = ((left.astype(np.int32) + right.astype(np.int32)) // 2).astype(np.int16)
+						stereo_latency = (time.time() - stereo_start) * 1000
 						
+						convert_start = time.time()
 						pcm_f32 = (pcm.astype(np.float32) / 32768.0)
+						convert_latency = (time.time() - convert_start) * 1000
 						
 						# Resample to 16kHz at ingestion point (SOC: single resampling)
+						resample_start = time.time()
 						pcm_16k = resample_to_16k(pcm_f32, actual_sample_rate)
+						resample_latency = (time.time() - resample_start) * 1000
 						
 						# Process audio frame (now always 16kHz)
 						if len(pcm_16k) > 0:
+							pipeline_start = time.time()
 							await pipeline.handle_audio_frame(pcm_16k)
+							pipeline_latency = (time.time() - pipeline_start) * 1000
+							
+							total_frame_latency = (time.time() - frame_start) * 1000
+							# Only log if frame processing is unusually slow (>50ms) - normal frames are ~20ms
+							if total_frame_latency > 50.0:
+								logger.info(f"[LATENCY] Frame processing (slow): receive={frame_receive_latency:.2f}ms, to_ndarray={to_ndarray_latency:.2f}ms, stereo={stereo_latency:.2f}ms, convert={convert_latency:.2f}ms, resample={resample_latency:.2f}ms, pipeline={pipeline_latency:.2f}ms, TOTAL={total_frame_latency:.2f}ms")
 				except Exception as e:
 					logger.exception("audio loop error")
 					print("audio loop error", e)

@@ -1,6 +1,10 @@
 import os
 from typing import Optional, AsyncGenerator
+import time
+import logging
 import google.generativeai as genai
+
+logger = logging.getLogger(__name__)
 
 
 class GeminiLLM:
@@ -41,16 +45,33 @@ class GeminiLLM:
 		Yields:
 			Text chunks as they are generated
 		"""
+		gen_start = time.time()
 		try:
 			# Send message and stream response
+			api_start = time.time()
 			response = self.chat.send_message(user_text, stream=True)
+			api_latency = (time.time() - api_start) * 1000
+			logger.info(f"[LATENCY] LLM API call: {api_latency:.2f}ms")
 			
+			chunk_count = 0
+			first_chunk_time = None
 			for chunk in response:
 				if chunk.text:
+					if first_chunk_time is None:
+						first_chunk_time = time.time()
+						ttfb = (first_chunk_time - gen_start) * 1000
+						logger.info(f"[LATENCY] LLM first token (TTFB): {ttfb:.2f}ms")
+					
+					chunk_count += 1
 					yield chunk.text
+			
+			total_latency = (time.time() - gen_start) * 1000
+			logger.info(f"[LATENCY] LLM streaming: api_call={api_latency:.2f}ms, chunks={chunk_count}, TOTAL={total_latency:.2f}ms")
 					
 		except Exception as e:
+			total_latency = (time.time() - gen_start) * 1000
 			print(f"Gemini error: {e}")
+			logger.error(f"[LATENCY] LLM error after {total_latency:.2f}ms: {e}")
 			yield f"Error: {str(e)}"
 	
 	async def generate(self, user_text: str) -> str:

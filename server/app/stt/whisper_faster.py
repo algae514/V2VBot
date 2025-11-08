@@ -1,9 +1,13 @@
 import numpy as np
 import os
 from typing import Optional
+import time
+import logging
 from faster_whisper import WhisperModel
 from scipy.signal import butter, sosfilt
 import torch
+
+logger = logging.getLogger(__name__)
 
 
 class WhisperFaster:
@@ -97,16 +101,22 @@ class WhisperFaster:
 		Returns:
 			Preprocessed audio at 16kHz
 		"""
+		preprocess_start = time.time()
 		audio = audio_16k.astype(np.float32)
 		
 		# Remove DC offset (center around 0)
+		dc_start = time.time()
 		audio = audio - np.mean(audio)
+		dc_latency = (time.time() - dc_start) * 1000
 		
 		# High-pass filter at 80Hz to remove rumble/noise (16kHz sample rate)
+		filter_start = time.time()
 		sos = butter(4, 80, btype='highpass', fs=16000, output='sos')
 		audio = sosfilt(sos, audio).astype(np.float32)
+		filter_latency = (time.time() - filter_start) * 1000
 		
 		# Calculate RMS for normalization
+		normalize_start = time.time()
 		rms = np.sqrt(np.mean(audio ** 2))
 		
 		if rms > 1e-6:  # Only normalize if there's actual signal
@@ -124,6 +134,11 @@ class WhisperFaster:
 			
 			# Scale to use 80% of dynamic range (leaves headroom)
 			audio = audio * 0.8
+		normalize_latency = (time.time() - normalize_start) * 1000
+		
+		total_preprocess_latency = (time.time() - preprocess_start) * 1000
+		if total_preprocess_latency > 10.0:  # Only log if > 10ms
+			logger.info(f"[LATENCY] STT preprocessing: DC={dc_latency:.2f}ms, filter={filter_latency:.2f}ms, normalize={normalize_latency:.2f}ms, TOTAL={total_preprocess_latency:.2f}ms")
 		
 		return audio
 	
@@ -141,13 +156,19 @@ class WhisperFaster:
 		if not self.is_ready():
 			return None
 		
+		transcribe_start = time.time()
 		try:
+			cast_start = time.time()
 			audio_16k = audio_16k.astype(np.float32)
+			cast_latency = (time.time() - cast_start) * 1000
 			
 			# Preprocess audio to improve quality (already at 16kHz)
+			preprocess_start = time.time()
 			audio_clean = self._preprocess_audio(audio_16k)
+			preprocess_latency = (time.time() - preprocess_start) * 1000
 			
 			# Transcribe
+			model_start = time.time()
 			segments, info = self.model.transcribe(
 				audio_clean,
 				language=language,
@@ -155,12 +176,22 @@ class WhisperFaster:
 				vad_filter=False,  # We already did VAD
 				without_timestamps=True
 			)
+			model_latency = (time.time() - model_start) * 1000
 			
 			# Collect all segments
+			collect_start = time.time()
 			transcription = " ".join([segment.text for segment in segments]).strip()
+			collect_latency = (time.time() - collect_start) * 1000
+			
+			total_latency = (time.time() - transcribe_start) * 1000
+			audio_duration = len(audio_16k) / 16000
+			logger.info(f"[LATENCY] STT transcribe: cast={cast_latency:.2f}ms, preprocess={preprocess_latency:.2f}ms, model={model_latency:.2f}ms, collect={collect_latency:.2f}ms, TOTAL={total_latency:.2f}ms (audio={audio_duration:.2f}s, ratio={total_latency/(audio_duration*1000):.2f}x)")
+			
 			return transcription if transcription else ""
 		
 		except Exception as e:
+			total_latency = (time.time() - transcribe_start) * 1000
 			print(f"Whisper transcription error: {e}")
+			logger.error(f"[LATENCY] STT transcribe error after {total_latency:.2f}ms: {e}")
 			return ""
 
