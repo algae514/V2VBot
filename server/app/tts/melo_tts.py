@@ -121,14 +121,15 @@ class MeloTTS:
     
     async def synthesize_sentences(self, text: str, speed: float = 1.0) -> AsyncGenerator[np.ndarray, None]:
         """
-        Synthesize text sentence by sentence for better streaming experience.
+        Synthesize text sentence by sentence using parallel requests for better performance.
+        Results are returned in the correct order.
         
         Args:
             text: Text to synthesize
             speed: Speech speed (1.0 = normal)
             
         Yields:
-            Complete sentence audio as numpy arrays
+            Complete sentence audio as numpy arrays (in order)
         """
         if not self.is_ready():
             raise RuntimeError("TTS service not ready")
@@ -148,27 +149,53 @@ class MeloTTS:
             print(f"[TTS] ⏱️  LATENCY: Sentence splitting took {split_latency:.2f}ms → {len(sentences)} sentences")
             logger.info(f"[LATENCY] TTS sentence splitting: {split_latency:.2f}ms, sentences={len(sentences)}")
             
+            # Filter out empty sentences and track original indices
+            sentence_tasks = []
             for i, sentence in enumerate(sentences):
                 if not sentence.strip():
                     continue
-                    
+                sentence_tasks.append((i, sentence.strip()))
+            
+            if not sentence_tasks:
+                return
+            
+            # Phase 2: Send all requests in parallel
+            parallel_start = time.time()
+            print(f"[TTS] 🚀 PARALLEL: Sending {len(sentence_tasks)} requests simultaneously")
+            logger.info(f"[TTS] Phase 2: Sending {len(sentence_tasks)} parallel TTS requests")
+            
+            # Create async tasks for all sentences
+            async def synthesize_with_index(index: int, sentence: str) -> tuple[int, np.ndarray, float]:
+                """Synthesize a sentence and return its index, audio, and latency."""
                 sentence_start = time.time()
-                print(f"[TTS] ⏱️  START: Sentence {i+1}/{len(sentences)}: '{sentence[:30]}{'...' if len(sentence) > 30 else ''}'")
-                
-                # Call HTTP service
-                audio_data = await self._synthesize_text(sentence.strip(), speed)
-                
+                audio_data = await self._synthesize_text(sentence, speed)
                 sentence_latency = (time.time() - sentence_start) * 1000
+                return (index, audio_data, sentence_latency)
+            
+            # Execute all requests in parallel
+            tasks = [synthesize_with_index(i, sentence) for i, sentence in sentence_tasks]
+            results = await asyncio.gather(*tasks)
+            
+            parallel_latency = (time.time() - parallel_start) * 1000
+            print(f"[TTS] ⏱️  PARALLEL: All {len(sentence_tasks)} requests completed in {parallel_latency:.2f}ms")
+            logger.info(f"[LATENCY] TTS parallel requests: {parallel_latency:.2f}ms for {len(sentence_tasks)} sentences")
+            
+            # Sort results by original index to maintain order
+            results.sort(key=lambda x: x[0])
+            
+            # Yield results in order
+            for original_index, audio_data, sentence_latency in results:
                 duration = len(audio_data) / self.sample_rate
-                print(f"[TTS] ⏱️  COMPLETE: Sentence {i+1} took {sentence_latency:.2f}ms (audio duration: {duration:.2f}s, {len(audio_data)} samples)")
-                logger.info(f"[LATENCY] TTS sentence {i+1}/{len(sentences)}: {sentence_latency:.2f}ms (audio_duration={duration:.2f}s)")
+                sentence_num = original_index + 1
+                print(f"[TTS] ⏱️  YIELD: Sentence {sentence_num}/{len(sentence_tasks)}: {sentence_latency:.2f}ms (audio duration: {duration:.2f}s, {len(audio_data)} samples)")
+                logger.info(f"[LATENCY] TTS sentence {sentence_num}/{len(sentence_tasks)}: {sentence_latency:.2f}ms (audio_duration={duration:.2f}s)")
                 
-                # Yield complete sentence audio
+                # Yield complete sentence audio in order
                 yield audio_data
             
             total_latency = (time.time() - total_start) * 1000
-            print(f"[TTS] ⏱️  TOTAL: All {len(sentences)} sentences synthesized in {total_latency:.2f}ms")
-            logger.info(f"[LATENCY] TTS total synthesis: {total_latency:.2f}ms, sentences={len(sentences)}")
+            print(f"[TTS] ⏱️  TOTAL: All {len(sentence_tasks)} sentences synthesized in {total_latency:.2f}ms (parallel: {parallel_latency:.2f}ms)")
+            logger.info(f"[LATENCY] TTS total synthesis: {total_latency:.2f}ms, sentences={len(sentence_tasks)}, parallel_time={parallel_latency:.2f}ms")
                     
         except Exception as e:
             total_latency = (time.time() - total_start) * 1000
