@@ -47,11 +47,58 @@ class MeloTTS:
             
         init_start = time.time()
         try:
-            self.http_client = httpx.AsyncClient(timeout=60.0)
+            # Enable connection pooling and HTTP/2 for better performance
+            # Fallback to HTTP/1.1 if HTTP/2 is not available
+            # Try to enable HTTP/2, fallback to HTTP/1.1 if not available
+            http_version = "HTTP/1.1"  # Default
+            try:
+                # Check if h2 is available
+                try:
+                    import h2
+                    h2_available = True
+                    logger.debug(f"h2 package found: version {h2.__version__}")
+                except ImportError:
+                    h2_available = False
+                    logger.warning("h2 package not found, HTTP/2 will not be available")
+                
+                if h2_available:
+                    # Try to create HTTP/2 client
+                    try:
+                        self.http_client = httpx.AsyncClient(
+                            timeout=60.0,
+                            limits=httpx.Limits(max_keepalive_connections=10, max_connections=20),
+                            http2=True  # Enable HTTP/2 for connection multiplexing
+                        )
+                        http_version = "HTTP/2"
+                        logger.info("HTTP/2 client created successfully")
+                    except Exception as e:
+                        # httpx might raise an exception even if h2 is installed
+                        logger.warning(f"HTTP/2 client creation failed ({type(e).__name__}: {e}), falling back to HTTP/1.1")
+                        self.http_client = httpx.AsyncClient(
+                            timeout=60.0,
+                            limits=httpx.Limits(max_keepalive_connections=10, max_connections=20)
+                        )
+                        http_version = "HTTP/1.1"
+                else:
+                    # h2 not available, use HTTP/1.1
+                    self.http_client = httpx.AsyncClient(
+                        timeout=60.0,
+                        limits=httpx.Limits(max_keepalive_connections=10, max_connections=20)
+                    )
+                    http_version = "HTTP/1.1"
+            except Exception as e:
+                # Fallback to HTTP/1.1 on any error
+                logger.warning(f"HTTP client initialization error ({type(e).__name__}: {e}), using HTTP/1.1 fallback")
+                self.http_client = httpx.AsyncClient(
+                    timeout=60.0,
+                    limits=httpx.Limits(max_keepalive_connections=10, max_connections=20)
+                )
+                http_version = "HTTP/1.1"
+            
             init_latency = (time.time() - init_start) * 1000
-            print(f"[TTS] ⏱️  INIT: HTTP TTS service initialized in {init_latency:.2f}ms")
+            print(f"[TTS] ⏱️  INIT: HTTP TTS service initialized in {init_latency:.2f}ms ({http_version})")
             print(f"[TTS] 📍 TTS URL: {self.tts_url}")
-            logger.info(f"[TTS] HTTP client initialized in {init_latency:.2f}ms at {self.tts_url}")
+            logger.info(f"[TTS] HTTP client initialized in {init_latency:.2f}ms at {self.tts_url} ({http_version})")
             self.is_ready_flag = True
         except Exception as e:
             init_latency = (time.time() - init_start) * 1000
