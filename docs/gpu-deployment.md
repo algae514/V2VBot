@@ -4,10 +4,10 @@ This guide covers deploying V2VBot on GPU-enabled infrastructure, specifically o
 
 ## Overview
 
-V2VBot has been updated to support GPU acceleration for all compute-intensive components:
+V2VBot supports GPU acceleration for compute-intensive components:
 - **Faster-Whisper STT**: CUDA acceleration with float16 precision
 - **Silero VAD**: ONNX Runtime with CUDA execution provider
-- **MeloTTS**: PyTorch CUDA acceleration for text-to-speech
+- **TTS**: HTTP-based service (remote, no local GPU needed)
 
 ## System Requirements
 
@@ -32,10 +32,10 @@ V2VBot has been updated to support GPU acceleration for all compute-intensive co
 V2VBot automatically detects and uses available GPUs. No manual configuration needed!
 
 ```python
-# All models automatically detect CUDA
+# Models automatically detect CUDA
 # - Whisper: Uses float16 on GPU, int8 on CPU
-# - MeloTTS: Uses CUDA if available
 # - Silero VAD: Uses CUDAExecutionProvider if available
+# - TTS: HTTP-based service (remote, no local GPU needed)
 ```
 
 ### Manual GPU Control
@@ -154,17 +154,17 @@ python -m uvicorn server.app.main:app --host 0.0.0.0 --port 8080
 
 | Component | CPU (int8) | GPU (float16) | Speedup |
 |-----------|------------|---------------|---------|
-| Whisper STT | 2-5 sec | 0.5-1 sec | 3-5x |
-| MeloTTS | 2-3 sec/sentence | 0.5-1 sec/sentence | 2-3x |
+| Whisper STT | 1.3-1.4 sec | 0.2-0.4 sec | 5-7x |
+| TTS (HTTP) | 1.4-4.0 sec/sentence | N/A (remote service) | N/A |
 | Silero VAD | ~20ms | ~10ms | 2x |
 
 ### Expected Latency on RTX 2000 Ada
 
 - **Speech Detection**: <10ms
-- **Transcription**: 0.5-1 second (10-20x real-time)
-- **LLM Response**: 0.5-2 seconds (depends on Gemini API)
-- **TTS Synthesis**: 0.5-1 second per sentence
-- **Total Round-Trip**: 2-4 seconds
+- **Transcription**: 0.2-0.4 second (GPU) or 1.3-1.4 second (CPU)
+- **LLM Response**: 0.7-1.0 second TTFB (depends on Gemini API)
+- **TTS Synthesis**: 1.4-4.0 seconds per sentence (HTTP service, includes network latency)
+- **Total Round-Trip**: ~2.5-5.5 seconds (GPU) or ~3.5-6.5 seconds (CPU)
 
 ## Troubleshooting
 
@@ -225,7 +225,7 @@ If you encounter CUDA OOM errors:
    GPU detected: NVIDIA RTX 2000 Ada Generation (8.00 GB)
    ✓ Whisper model ready on cuda
    Using CUDA for Silero VAD
-   [TTS] MeloTTS model loaded on cuda
+   [TTS] HTTP TTS service initialized
    ```
 
 ## Environment Variables Reference
@@ -274,8 +274,8 @@ RTX 2000 Ada on RunPod:
 Models are cached in `/app/models`:
 - **Silero VAD**: ~2MB (included)
 - **Whisper small.en**: ~466MB (auto-downloaded)
-- **MeloTTS**: ~160MB (auto-downloaded)
-- **Total**: ~630MB
+- **TTS**: HTTP-based service (no local models needed)
+- **Total**: ~468MB
 
 Use persistent volumes to avoid re-downloading.
 

@@ -31,13 +31,16 @@ This folder contains the project plan, requirements, folder structure, architect
   - High accuracy transcription with audio preprocessing
   - Dynamic sample rate detection (16k-96kHz support)
   - Stereo-to-mono conversion
-- **LLM Integration: Google Gemini** (gemini-1.5-flash)
+- **LLM Integration: Google Gemini** (gemini-2.0-flash, configurable)
   - Streaming responses for real-time feedback
   - Conversation history maintained
-- **TTS Integration: MeloTTS-English v3** 
-  - High-quality speech synthesis (44100Hz CD-quality)
-  - Sentence-based streaming for natural conversation flow
-  - Real-time audio chunk generation and transmission
+  - Retry logic with exponential backoff for rate limits
+- **TTS Integration: HTTP-based TTS service** 
+  - Streaming TTS: Starts synthesis as soon as sentences are detected from LLM stream
+  - Parallel processing: Multiple sentences synthesized concurrently
+  - HTTP/2 connection pooling for reduced network latency
+  - Ordered delivery: Sentences sent in LLM response order
+  - Audio output: 22050Hz (from TTS service)
 - **Barge-In Functionality**: Interrupt AI speech when user starts speaking
   - Immediate audio interruption and queue clearing
   - Natural conversation flow with interruption detection

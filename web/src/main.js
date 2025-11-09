@@ -11,10 +11,12 @@ let micTrack = null; // Microphone track for muting
 let statsTimer = null;
 let audioContext = null;
 let audioQueue = [];
+let audioQueueMap = new Map(); // Map of sequence number -> audio chunk for ordered playback
+let nextExpectedSequence = 0; // Next expected sequence number
 let isPlayingAudio = false;
 let currentAudioSource = null; // Track current playing audio for interruption
 let audioCleanupTimer = null; // Timer for cleanup
-let maxAudioQueueSize = 5; // Prevent memory buildup
+let maxAudioQueueSize = 50; // Increased to handle longer responses (prevent memory buildup)
 let audioGainNode = null; // Gain node for immediate volume control
 let isInterrupted = false; // Flag to track interruption state
 
@@ -172,7 +174,9 @@ function interruptAudioPlayback() {
 	}
 	
 	// Clear audio queue completely
-	audioQueue.length = 0; // More efficient than reassignment
+		audioQueue.length = 0; // More efficient than reassignment
+		audioQueueMap.clear();
+		nextExpectedSequence = 0;
 	isPlayingAudio = false;
 	
 	// Clear any pending cleanup timers
@@ -198,6 +202,8 @@ function cleanupAudioResources() {
 	
 	// Clear queue
 	audioQueue.length = 0;
+	audioQueueMap.clear();
+	nextExpectedSequence = 0;
 	isPlayingAudio = false;
 	isInterrupted = false; // Reset interruption flag
 	
@@ -248,14 +254,44 @@ function unmuteMicrophone() {
 }
 
 async function processAudioQueue() {
-	if (isPlayingAudio || audioQueue.length === 0) return;
+	if (isPlayingAudio || audioQueueMap.size === 0) return;
 	
 	isPlayingAudio = true;
-	log(`🎵 Starting sequential audio playback: ${audioQueue.length} sentences queued`);
+	log(`🎵 Starting sequential audio playback: ${audioQueueMap.size} chunks queued, next expected: ${nextExpectedSequence}`);
 	
-	// Process queue with frequent interruption checking
-	while (audioQueue.length > 0 && isPlayingAudio && !isInterrupted) {
-		const { audioData, sampleRate } = audioQueue.shift();
+	// Process queue in order by sequence number
+	while (audioQueueMap.size > 0 && isPlayingAudio && !isInterrupted) {
+		// Check if we have the next expected sequence
+		if (!audioQueueMap.has(nextExpectedSequence)) {
+			// Wait a bit for the next chunk to arrive (might be out of order)
+			await new Promise(resolve => setTimeout(resolve, 10));
+			
+			// If still not available after waiting, check if we have any chunks ahead
+			if (!audioQueueMap.has(nextExpectedSequence)) {
+				const availableSeqs = Array.from(audioQueueMap.keys()).sort((a, b) => a - b);
+				if (availableSeqs.length > 0 && availableSeqs[0] > nextExpectedSequence) {
+					// We're missing a chunk, skip to the next available one
+					log(`⚠️ Missing sequence ${nextExpectedSequence}, skipping to ${availableSeqs[0]}`);
+					nextExpectedSequence = availableSeqs[0];
+				} else if (availableSeqs.length === 0) {
+					// No more chunks available
+					break;
+				} else {
+					// Still waiting for the next chunk
+					continue;
+				}
+			}
+		}
+		
+		// Get and play the next chunk in sequence
+		const chunk = audioQueueMap.get(nextExpectedSequence);
+		if (!chunk) {
+			nextExpectedSequence++;
+			continue;
+		}
+		
+		audioQueueMap.delete(nextExpectedSequence);
+		nextExpectedSequence++;
 		
 		// Check interruption before playing each chunk
 		if (isInterrupted) {
@@ -264,7 +300,8 @@ async function processAudioQueue() {
 		}
 		
 		try {
-			await playAudioChunk(audioData, sampleRate);
+			log(`🎵 Playing chunk sequence ${chunk.sequence}`);
+			await playAudioChunk(chunk.audioData, chunk.sampleRate);
 		} catch (error) {
 			log('❌ Error playing audio chunk:', error);
 			// Continue with next chunk instead of stopping
@@ -281,7 +318,7 @@ async function processAudioQueue() {
 	}
 	
 	isPlayingAudio = false;
-	log('🎵 Finished sequential audio playback');
+	log(`🎵 Finished sequential audio playback (next expected: ${nextExpectedSequence})`);
 	
 	// Schedule cleanup after a delay
 	if (audioCleanupTimer) {
@@ -399,7 +436,7 @@ async function createPeerAndConnect(stream) {
 			transcriptEl.style.color = '';
 			
 			// PRIORITY: Interrupt audio playback immediately when user starts speaking
-			if (isPlayingAudio || audioQueue.length > 0) {
+			if (isPlayingAudio || audioQueue.length > 0 || audioQueueMap.size > 0) {
 				log('🔇 User started speaking - interrupting audio playback');
 				interruptAudioPlayback();
 			}
@@ -466,22 +503,30 @@ async function createPeerAndConnect(stream) {
 		if (msg.event === 'tts_started') {
 			log('🎵 TTS synthesis started');
 			resetAudioForNewPlayback(); // Reset for new TTS
+			// Reset sequence tracking for new TTS session
+			audioQueueMap.clear();
+			nextExpectedSequence = 0;
 		}
 		if (msg.event === 'tts_chunk' && msg.audio && msg.sample_rate) {
-			// Prevent memory buildup by limiting queue size
-			if (audioQueue.length >= maxAudioQueueSize) {
-				log(`⚠️ Audio queue full (${maxAudioQueueSize}), dropping oldest chunk`);
-				audioQueue.shift(); // Remove oldest chunk
+			const sequence = msg.sequence !== undefined ? msg.sequence : nextExpectedSequence; // Fallback for old format
+			
+			// Store chunk by sequence number for ordered playback
+			audioQueueMap.set(sequence, {
+				audioData: msg.audio,
+				sampleRate: msg.sample_rate,
+				sequence: sequence
+			});
+			
+			// Prevent memory buildup by limiting queue size (drop oldest if needed)
+			if (audioQueueMap.size > maxAudioQueueSize) {
+				const oldestSeq = Math.min(...audioQueueMap.keys());
+				log(`⚠️ Audio queue full (${maxAudioQueueSize}), dropping sequence ${oldestSeq}`);
+				audioQueueMap.delete(oldestSeq);
 			}
 			
-			// Queue sentence audio for sequential playback
-			audioQueue.push({
-				audioData: msg.audio,
-				sampleRate: msg.sample_rate
-			});
-			log(`🎵 TTS sentence queued: ${msg.audio.length} bytes at ${msg.sample_rate}Hz (queue: ${audioQueue.length})`);
+			log(`🎵 TTS chunk received: sequence=${sequence}, ${msg.audio.length} bytes at ${msg.sample_rate}Hz (queued: ${audioQueueMap.size})`);
 			
-			// Process audio queue (will play sentences sequentially)
+			// Process audio queue (will play sentences in order)
 			processAudioQueue();
 		}
 		if (msg.event === 'tts_complete') {

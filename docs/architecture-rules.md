@@ -4,14 +4,14 @@
 - Streaming-first: Process audio and tokens incrementally end-to-end.
 - Parallel fan-out: Send each 20 ms input frame to STT and VAD concurrently.
 - Early partials: Emit STT partials and LLM partial tokens as soon as available.
-- Chunked TTS: Sentence-based streaming with MeloTTS-English v3; stream first sentence asap; sequential playback.
+- Chunked TTS: Sentence-based streaming with HTTP-based TTS service; stream first sentence asap; parallel synthesis with ordered delivery; sequential playback.
 - Single-resample: Normalize to 16 kHz mono once at ingress, avoid re-resampling.
 - Barge-in: Mic VAD during TTS triggers cancel of TTS and LLM promptly.
 
 ## Turn Detection
 - Silero VAD (20 ms frames) + endpointing.
 - Start-of-speech: 20ms of consecutive voiced frames.
-- End-of-utterance: 1500ms of unvoiced.
+- End-of-utterance: 1000ms of unvoiced (configurable, optimized for real-time conversation).
 - Fallback to energy-based detection if Silero fails.
 
 ## Concurrency & Backpressure

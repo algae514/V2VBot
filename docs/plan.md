@@ -10,11 +10,12 @@
    - WebRTC pipeline (audio up/down + DataChannel) ✅
    - Streaming STT partials, endpointing/finals ✅
    - Gemini streaming with partial tokens ✅
-   - MeloTTS-English v3 sentence-based TTS streaming ✅
+   - HTTP-based TTS service with sentence-based streaming, parallel processing, and ordered delivery ✅
    - Barge-in: detect mic speech during TTS → cancel TTS and LLM ✅
 2. Latency & UX Tuning ✅ COMPLETE
-   - VAD/endpoint thresholds implemented (1.5s utterance, 2s turn end).
-   - TTS sentence-based streaming with sequential playback implemented.
+   - VAD/endpoint thresholds implemented (1000ms turn end, configurable).
+   - TTS sentence-based streaming with parallel processing and ordered delivery implemented.
+   - Phase 1-3 optimizations: HTTP/2 pooling, parallel TTS, streaming TTS.
 3. Reliability & Ops
    - STUN/TURN fallback, reconnection.
    - Metrics/observability (latency budget per stage), health checks.
