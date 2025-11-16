@@ -16,13 +16,14 @@ let nextExpectedSequence = 0; // Next expected sequence number
 let isPlayingAudio = false;
 let currentAudioSource = null; // Track current playing audio for interruption
 let audioCleanupTimer = null; // Timer for cleanup
-let maxAudioQueueSize = 50; // Increased to handle longer responses (prevent memory buildup)
+let maxAudioQueueSize = 200; // Large enough for very long responses (200 chunks = ~10min of audio)
 let audioGainNode = null; // Gain node for immediate volume control
 let isInterrupted = false; // Flag to track interruption state
+let isTtsComplete = false; // Flag to track if TTS synthesis is complete
 
 function log(...args) {
 	const line = args.map(String).join(' ');
-	// console.log('[ui]', line);
+	console.log('[ui]', line); // Enable console logging for debugging
 	// Only append to logEl if not a tts_chunk message
 	if (!line.includes('tts_chunk')) {
 		logEl.textContent += line + '\n';
@@ -177,6 +178,7 @@ function interruptAudioPlayback() {
 		audioQueue.length = 0; // More efficient than reassignment
 		audioQueueMap.clear();
 		nextExpectedSequence = 0;
+		isTtsComplete = false; // Reset completion flag
 	isPlayingAudio = false;
 	
 	// Clear any pending cleanup timers
@@ -225,6 +227,12 @@ function cleanupAudioResources() {
 }
 
 function resetAudioForNewPlayback() {
+	// Cancel any pending cleanup timer from previous playback
+	if (audioCleanupTimer) {
+		clearTimeout(audioCleanupTimer);
+		audioCleanupTimer = null;
+	}
+	
 	// Reset interruption flag for new TTS
 	isInterrupted = false;
 	
@@ -254,79 +262,73 @@ function unmuteMicrophone() {
 }
 
 async function processAudioQueue() {
-	if (isPlayingAudio || audioQueueMap.size === 0) return;
+	// Only start if not already playing
+	if (isPlayingAudio) {
+		return;
+	}
+	
+	// Nothing to play
+	if (audioQueueMap.size === 0) {
+		return;
+	}
 	
 	isPlayingAudio = true;
-	log(`🎵 Starting sequential audio playback: ${audioQueueMap.size} chunks queued, next expected: ${nextExpectedSequence}`);
+	log(`🎵 Starting audio playback: ${audioQueueMap.size} chunks queued, next expected: ${nextExpectedSequence}`);
 	
-	// Process queue in order by sequence number
-	while (audioQueueMap.size > 0 && isPlayingAudio && !isInterrupted) {
-		// Check if we have the next expected sequence
-		if (!audioQueueMap.has(nextExpectedSequence)) {
-			// Wait a bit for the next chunk to arrive (might be out of order)
-			await new Promise(resolve => setTimeout(resolve, 10));
+	// Simple loop: play chunks in order until queue is empty or interrupted
+	while (!isInterrupted) {
+		// Get the next chunk
+		const chunk = audioQueueMap.get(nextExpectedSequence);
+		
+		if (!chunk) {
+			// Next chunk not ready yet, check if we should wait, skip, or exit
+			const availableSeqs = Array.from(audioQueueMap.keys()).sort((a, b) => a - b);
 			
-			// If still not available after waiting, check if we have any chunks ahead
-			if (!audioQueueMap.has(nextExpectedSequence)) {
-				const availableSeqs = Array.from(audioQueueMap.keys()).sort((a, b) => a - b);
-				if (availableSeqs.length > 0 && availableSeqs[0] > nextExpectedSequence) {
-					// We're missing a chunk, skip to the next available one
-					log(`⚠️ Missing sequence ${nextExpectedSequence}, skipping to ${availableSeqs[0]}`);
-					nextExpectedSequence = availableSeqs[0];
-				} else if (availableSeqs.length === 0) {
-					// No more chunks available
-					break;
-				} else {
-					// Still waiting for the next chunk
-					continue;
-				}
+			if (availableSeqs.length > 0 && availableSeqs[0] > nextExpectedSequence) {
+				// We have later chunks but missing this one - skip to next available
+				log(`⚠️ Missing sequence ${nextExpectedSequence}, skipping to ${availableSeqs[0]} (${availableSeqs.length} chunks available)`);
+				nextExpectedSequence = availableSeqs[0];
+				continue;
+			} else if (isTtsComplete && availableSeqs.length === 0) {
+				// TTS is done and no more chunks in queue
+				log(`✅ No more chunks (TTS complete), stopping at sequence ${nextExpectedSequence}`);
+				break;
+			} else {
+				// TTS still generating, wait a bit for next chunk
+				log(`⏳ Waiting for sequence ${nextExpectedSequence}... (${audioQueueMap.size} chunks in queue)`);
+				await new Promise(resolve => setTimeout(resolve, 50));
+				continue;
 			}
 		}
 		
-		// Get and play the next chunk in sequence
-		const chunk = audioQueueMap.get(nextExpectedSequence);
-		if (!chunk) {
-			nextExpectedSequence++;
-			continue;
-		}
-		
+		// Remove chunk from queue
 		audioQueueMap.delete(nextExpectedSequence);
+		const currentSeq = nextExpectedSequence;
 		nextExpectedSequence++;
 		
-		// Check interruption before playing each chunk
-		if (isInterrupted) {
-			log('🔇 Playback interrupted before chunk');
-			break;
-		}
-		
+		// Play the chunk
 		try {
-			log(`🎵 Playing chunk sequence ${chunk.sequence}`);
+			log(`🎵 Playing sequence ${currentSeq} (${audioQueueMap.size} remaining)`);
 			await playAudioChunk(chunk.audioData, chunk.sampleRate);
+			log(`✅ Finished sequence ${currentSeq}`);
 		} catch (error) {
-			log('❌ Error playing audio chunk:', error);
-			// Continue with next chunk instead of stopping
+			log(`❌ Error playing sequence ${currentSeq}:`, error);
 		}
 		
-		// Check interruption after each chunk
-		if (isInterrupted) {
-			log('🔇 Playback interrupted after chunk');
-			break;
-		}
-		
-		// Minimal delay to prevent blocking the main thread
+		// Small delay to prevent tight loop
 		await new Promise(resolve => setTimeout(resolve, 5));
 	}
 	
 	isPlayingAudio = false;
-	log(`🎵 Finished sequential audio playback (next expected: ${nextExpectedSequence})`);
+	log(`🎵 Playback stopped: next=${nextExpectedSequence}, remaining=${audioQueueMap.size}, interrupted=${isInterrupted}`);
 	
-	// Schedule cleanup after a delay
+	// Schedule cleanup
 	if (audioCleanupTimer) {
 		clearTimeout(audioCleanupTimer);
 	}
 	audioCleanupTimer = setTimeout(() => {
 		cleanupAudioResources();
-	}, 5000); // Clean up after 5 seconds of inactivity
+	}, 5000);
 }
 
 function onUnhandledRejection(ev) {
@@ -342,13 +344,13 @@ window.addEventListener('beforeunload', () => {
 	}
 });
 
-// Cleanup on visibility change (when tab becomes hidden)
-document.addEventListener('visibilitychange', () => {
-	if (document.hidden) {
-		// Page is hidden, clean up resources
-		cleanupAudioResources();
-	}
-});
+// Note: Disabled automatic cleanup on visibility change to prevent interrupting playback
+// Cleanup only happens on explicit interruption, page unload, or after 5 seconds of inactivity
+// document.addEventListener('visibilitychange', () => {
+// 	if (document.hidden) {
+// 		cleanupAudioResources();
+// 	}
+// });
 
 async function startSenderStats() {
 	if (!pc) return;
@@ -506,6 +508,7 @@ async function createPeerAndConnect(stream) {
 			// Reset sequence tracking for new TTS session
 			audioQueueMap.clear();
 			nextExpectedSequence = 0;
+			isTtsComplete = false; // Reset completion flag
 		}
 		if (msg.event === 'tts_chunk' && msg.audio && msg.sample_rate) {
 			const sequence = msg.sequence !== undefined ? msg.sequence : nextExpectedSequence; // Fallback for old format
@@ -530,7 +533,10 @@ async function createPeerAndConnect(stream) {
 			processAudioQueue();
 		}
 		if (msg.event === 'tts_complete') {
-			log('🎵 TTS synthesis complete');
+			isTtsComplete = true; // Mark TTS as complete
+			log(`🎵 TTS synthesis complete - queue size: ${audioQueueMap.size}, next expected: ${nextExpectedSequence}`);
+			// Trigger one final queue processing to handle any remaining chunks
+			processAudioQueue();
 		}
 		if (msg.event === 'tts_interrupted') {
 			log('🔇 TTS synthesis interrupted by user');

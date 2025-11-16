@@ -51,7 +51,7 @@ class AudioPipeline:
 			# Device will be auto-detected based on USE_GPU env var
 			self.tts = MeloTTS(device=None, language="EN")
 			# Semaphore to serialize TTS synthesis (prevent PyTorch race conditions)
-			self.tts_semaphore = asyncio.Semaphore(1)  # Only 1 synthesis at a time
+			self.tts_semaphore = asyncio.Semaphore(1)  # Only 1 synthesis at a time (prevents PyTorch race conditions)
 			# Don't set to None if not ready yet - initialization is async and will complete later
 			if self.tts.is_ready():
 				device = self.tts.get_device()
@@ -377,9 +377,13 @@ class AudioPipeline:
 			
 			# Send llm_complete with full response
 			complete_start = time.time()
+			print(f"[LLM] ========== FULL RESPONSE ==========")
 			print(f"[LLM] Response: '{full_response}'")
-			print(f"[LLM] Response length: {len(full_response)} chars, sentence_buffer remaining: '{sentence_buffer}' ({len(sentence_buffer)} chars)")
-			print(f"[LLM] Total sentences queued: {sentence_index}, completed_sentences count: {len(completed_sentences)}")
+			print(f"[LLM] Response length: {len(full_response)} chars, {len(full_response.split())} words")
+			print(f"[LLM] Sentence buffer remaining: '{sentence_buffer}' ({len(sentence_buffer)} chars)")
+			print(f"[LLM] Total sentences queued for TTS: {sentence_index}")
+			print(f"[LLM] Completed sentences count: {len(completed_sentences)}")
+			print(f"[LLM] ======================================")
 			logger.info(f"[LLM] Full response: {len(full_response)} chars, sentence_buffer remaining: {len(sentence_buffer)} chars, sentences queued: {sentence_index}")
 			escaped_response = full_response.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
 			self.dc_send('{"event":"llm_complete","text":"' + escaped_response + '"}')
@@ -509,6 +513,11 @@ class AudioPipeline:
 			msg = "[TTS] ❌ TTS not available"
 			print(msg)
 			logger.error(msg)
+			# Mark as failed so subsequent sentences can continue
+			failed_sentences.add(sentence_index)
+			async with send_lock:
+				if next_sentence_to_send[0] == sentence_index:
+					next_sentence_to_send[0] += 1
 			return
 		
 		tts_ready = self.tts.is_ready()
@@ -516,6 +525,11 @@ class AudioPipeline:
 			msg = f"[TTS] ❌ TTS not ready (is_ready()={tts_ready})"
 			print(msg)
 			logger.error(msg)
+			# Mark as failed so subsequent sentences can continue
+			failed_sentences.add(sentence_index)
+			async with send_lock:
+				if next_sentence_to_send[0] == sentence_index:
+					next_sentence_to_send[0] += 1
 			return
 		
 		sentence_stripped = sentence.strip()
@@ -523,6 +537,11 @@ class AudioPipeline:
 			msg = "[TTS] ❌ Empty sentence"
 			print(msg)
 			logger.warning(msg)
+			# Mark as failed so subsequent sentences can continue
+			failed_sentences.add(sentence_index)
+			async with send_lock:
+				if next_sentence_to_send[0] == sentence_index:
+					next_sentence_to_send[0] += 1
 			return
 		
 		logger.info(f"[TTS] All checks passed, proceeding with synthesis")
@@ -535,6 +554,11 @@ class AudioPipeline:
 				msg = "[TTS] ⏸️  Synthesis interrupted"
 				print(msg)
 				logger.warning(msg)
+				# Mark as failed so subsequent sentences can continue
+				failed_sentences.add(sentence_index)
+				async with send_lock:
+					if next_sentence_to_send[0] == sentence_index:
+						next_sentence_to_send[0] += 1
 				return
 			
 			# Synthesize the single sentence using semaphore to prevent race conditions
@@ -553,6 +577,11 @@ class AudioPipeline:
 			
 			if self.tts_interrupted:
 				print(f"[TTS] ⏸️  Synthesis interrupted after completion")
+				# Mark as failed so subsequent sentences can continue
+				failed_sentences.add(sentence_index)
+				async with send_lock:
+					if next_sentence_to_send[0] == sentence_index:
+						next_sentence_to_send[0] += 1
 				return
 			
 			duration = len(audio_data) / self.tts.get_sample_rate()
