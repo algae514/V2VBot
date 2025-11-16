@@ -28,9 +28,13 @@ print_info() {
     echo -e "${YELLOW}ℹ $1${NC}"
 }
 
-# Check if running as root
+# Check if running as root and set sudo prefix
 if [ "$EUID" -eq 0 ]; then 
     print_info "Running as root user - this is fine for RunPod environments"
+    SUDO=""
+else
+    SUDO="sudo"
+    print_info "Running as regular user - will use sudo for system commands"
 fi
 
 # 1. System Information
@@ -43,10 +47,8 @@ echo ""
 # 2. Check GPU
 print_info "Checking GPU..."
 if command -v nvidia-smi &> /dev/null; then
-    # Try the full query first, fallback to basic info if it fails
-    if nvidia-smi --query-gpu=name,memory.total,driver_version,cuda_version --format=csv,noheader 2>/dev/null; then
-        print_success "GPU detected with CUDA info"
-    elif nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader 2>/dev/null; then
+    # Try the query without cuda_version (not always available)
+    if nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader 2>/dev/null; then
         print_success "GPU detected (basic info)"
     else
         # Fallback to basic nvidia-smi
@@ -60,13 +62,13 @@ echo ""
 
 # 3. Update system packages
 print_info "Updating system packages..."
-apt-get update -qq
+$SUDO apt-get update -qq
 print_success "System packages updated"
 echo ""
 
 # 4. Install system dependencies
 print_info "Installing system dependencies..."
-apt-get install -y -qq \
+$SUDO apt-get install -y -qq \
     python3 \
     python3-pip \
     python3-venv \
@@ -94,38 +96,33 @@ echo "Python version: $PYTHON_VERSION"
 print_success "Python is available"
 echo ""
 
-# 6. Create application directory
-APP_DIR="/workspace/V2VBot"
+# 6. Detect application directory
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APP_DIR="$SCRIPT_DIR"
+
 print_info "Setting up application directory: $APP_DIR"
 
-if [ -d "$APP_DIR" ]; then
-    print_info "Directory already exists. Using existing directory."
-else
-    mkdir -p /workspace
-    print_success "Created /workspace directory"
+# Verify we're in a git repository or at least have the expected structure
+if [ ! -d "$APP_DIR/server" ]; then
+    print_error "Error: server directory not found in $APP_DIR"
+    print_error "Please run this script from the V2VBot project root directory"
+    exit 1
 fi
 
-cd /workspace
+cd "$APP_DIR"
 echo "Current directory: $(pwd)"
 echo ""
 
-# 7. Clone or update repository
+# 7. Update repository if it's a git repo
 if [ -d "$APP_DIR/.git" ]; then
-    print_info "Repository already exists. Pulling latest changes..."
-    cd $APP_DIR
-    git pull
-    print_success "Repository updated"
+    print_info "Repository detected. Pulling latest changes..."
+    git pull || print_info "Git pull failed or not needed (continuing anyway)"
+    print_success "Repository check complete"
 else
-    print_info "Cloning repository..."
-    print_error "Please clone your repository manually:"
-    echo "  cd /workspace"
-    echo "  git clone <your-repo-url> V2VBot"
-    echo ""
-    echo "After cloning, run this script again or continue with manual setup."
-    exit 0
+    print_info "Not a git repository (or .git not found) - continuing with setup"
 fi
 
-cd $APP_DIR
 echo ""
 
 # 8. Create Python virtual environment
@@ -141,19 +138,25 @@ echo ""
 # 9. Activate virtual environment and upgrade pip
 print_info "Activating virtual environment and upgrading pip..."
 source venv/bin/activate
-pip install --upgrade pip setuptools wheel -q
+pip install --no-cache-dir --upgrade pip setuptools wheel -q
 print_success "Pip upgraded"
 echo ""
 
 # 10. Install Python dependencies
 print_info "Installing Python dependencies (this may take a few minutes)..."
-pip install -r server/requirements.txt
+pip install --no-cache-dir -r server/requirements.txt
 print_success "Python dependencies installed"
+echo ""
+
+# 10a. Install MeloTTS from GitHub (required for TTS)
+print_info "Installing MeloTTS from GitHub..."
+pip install --no-cache-dir git+https://github.com/myshell-ai/MeloTTS.git
+print_success "MeloTTS installed"
 echo ""
 
 # 11. Verify GPU support in Python
 print_info "Verifying GPU support in Python..."
-python3 << 'PYEOF'
+python << 'PYEOF'
 import sys
 try:
     import torch
@@ -251,7 +254,7 @@ After=network.target
 
 [Service]
 Type=simple
-User=root
+User=$(whoami)
 WorkingDirectory=$APP_DIR
 Environment="PATH=$APP_DIR/venv/bin:/usr/local/bin:/usr/bin:/bin"
 ExecStart=$APP_DIR/venv/bin/python -m uvicorn server.app.main:app --host 0.0.0.0 --port 8080 --workers 1
@@ -264,8 +267,8 @@ StandardError=append:$APP_DIR/logs/server.log
 WantedBy=multi-user.target
 EOF
 
-mv /tmp/v2vbot.service /etc/systemd/system/v2vbot.service
-systemctl daemon-reload
+$SUDO mv /tmp/v2vbot.service /etc/systemd/system/v2vbot.service
+$SUDO systemctl daemon-reload
 print_success "Systemd service created"
 echo ""
 
