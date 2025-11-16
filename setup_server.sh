@@ -85,6 +85,9 @@ $SUDO apt-get install -y -qq \
     portaudio19-dev \
     libportaudio2 \
     pkg-config \
+    mecab \
+    libmecab-dev \
+    mecab-ipadic-utf8 \
     > /dev/null 2>&1
 print_success "System dependencies installed"
 echo ""
@@ -154,6 +157,24 @@ pip install --no-cache-dir git+https://github.com/myshell-ai/MeloTTS.git
 print_success "MeloTTS installed"
 echo ""
 
+# 10b. Install MeCab Python bindings and UniDic (required for MeloTTS Japanese support)
+print_info "Installing MeCab Python bindings and UniDic..."
+pip install --no-cache-dir unidic-lite > /dev/null 2>&1
+print_info "Downloading UniDic dictionary (this may take a few minutes, ~526MB)..."
+if python -m unidic download 2>&1 | grep -q "Finished download"; then
+    print_success "UniDic dictionary downloaded"
+else
+    # Check if already downloaded
+    if [ -d "$(python -c 'import unidic; import os; print(os.path.join(os.path.dirname(unidic.__file__), "dicdir"))' 2>/dev/null)" ] && [ -f "$(python -c 'import unidic; import os; print(os.path.join(os.path.dirname(unidic.__file__), "dicdir", "dicrc"))' 2>/dev/null)" ]; then
+        print_success "UniDic dictionary already exists"
+    else
+        print_info "UniDic download in progress (continuing setup, will complete in background)..."
+        python -m unidic download > /tmp/unidic_download.log 2>&1 &
+    fi
+fi
+print_success "MeCab dependencies installed"
+echo ""
+
 # 11. Verify GPU support in Python
 print_info "Verifying GPU support in Python..."
 python << 'PYEOF'
@@ -201,8 +222,8 @@ if [ ! -f ".env" ]; then
         echo "  Run: nano .env"
         echo "  Or: vim .env"
         echo ""
-        read -p "Press Enter to open nano editor to edit .env file (or Ctrl+C to skip)..." -r
-        nano .env
+        print_info "Skipping interactive editor (non-interactive mode)"
+        print_info "Please edit .env manually and add your GEMINI_API_KEY before starting the server"
     else
         print_error "env.example not found!"
         exit 1

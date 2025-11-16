@@ -44,7 +44,7 @@ cp env.example .env
 nano .env  # Add your GEMINI_API_KEY (required!)
 
 # Run setup and start script
-bash start_runpod.sh
+bash start_aws.sh
 ```
 
 The script will:

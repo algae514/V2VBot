@@ -83,6 +83,9 @@ apt-get install -y -qq \
     libportaudio2 \
     pkg-config \
     sudo \
+    mecab \
+    libmecab-dev \
+    mecab-ipadic-utf8 \
     > /dev/null 2>&1
 print_success "System dependencies installed"
 
@@ -170,6 +173,26 @@ echo ""
 print_info "Installing Python dependencies (this may take a few minutes)..."
 pip install -r server/requirements.txt
 print_success "Python dependencies installed"
+echo ""
+
+# Install MeloTTS and MeCab dependencies (if not already in requirements.txt)
+print_info "Installing MeloTTS and MeCab dependencies..."
+pip install --no-cache-dir git+https://github.com/myshell-ai/MeloTTS.git > /dev/null 2>&1 || print_info "MeloTTS may already be installed"
+pip install --no-cache-dir unidic-lite > /dev/null 2>&1
+print_info "Downloading UniDic dictionary (this may take a few minutes, ~526MB)..."
+if python3 -m unidic download 2>&1 | grep -q "Finished download"; then
+    print_success "UniDic dictionary downloaded"
+else
+    # Check if already downloaded
+    UNIDIC_DIR=$(python3 -c 'import unidic; import os; print(os.path.join(os.path.dirname(unidic.__file__), "dicdir"))' 2>/dev/null)
+    if [ -d "$UNIDIC_DIR" ] && [ -f "$UNIDIC_DIR/dicrc" ]; then
+        print_success "UniDic dictionary already exists"
+    else
+        print_info "UniDic download in progress (continuing setup, will complete in background)..."
+        python3 -m unidic download > /tmp/unidic_download.log 2>&1 &
+    fi
+fi
+print_success "MeloTTS dependencies installed"
 echo ""
 
 # Verify GPU support in Python

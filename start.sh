@@ -3,8 +3,12 @@ set -euo pipefail
 
 PIDFILE=.uvicorn.pid
 HOST=0.0.0.0
-PORT=8000
+PORT=8080
 APP=server.app.main:app
+
+# SSL Configuration
+SSL_CERT="${SSL_CERT:-ssl/cert.pem}"
+SSL_KEY="${SSL_KEY:-ssl/key.pem}"
 
 # Activate venv if present
 if [ -d .venv ]; then
@@ -24,9 +28,21 @@ if [ -f "$PIDFILE" ]; then
 	rm -f "$PIDFILE"
 fi
 
-# Start new server
-uvicorn "$APP" --host "$HOST" --port "$PORT" --reload &
-NEWPID=$!
-echo $NEWPID > "$PIDFILE"
-echo "Server started at http://$HOST:$PORT (PID $NEWPID)"
+# Check if SSL certificates exist
+if [ -f "$SSL_CERT" ] && [ -f "$SSL_KEY" ]; then
+	echo "🔒 Starting server with HTTPS..."
+	uvicorn "$APP" --host "$HOST" --port "$PORT" --ssl-keyfile "$SSL_KEY" --ssl-certfile "$SSL_CERT" --reload &
+	NEWPID=$!
+	echo $NEWPID > "$PIDFILE"
+	echo "✅ Server started at https://$HOST:$PORT (PID $NEWPID)"
+	echo "⚠️  Note: If using self-signed certificate, your browser will show a security warning."
+	echo "   Click 'Advanced' → 'Proceed to site' to continue."
+else
+	echo "⚠️  SSL certificates not found. Starting server with HTTP..."
+	echo "   To enable HTTPS, run: ./setup_ssl.sh"
+	uvicorn "$APP" --host "$HOST" --port "$PORT" --reload &
+	NEWPID=$!
+	echo $NEWPID > "$PIDFILE"
+	echo "Server started at http://$HOST:$PORT (PID $NEWPID)"
+fi
 

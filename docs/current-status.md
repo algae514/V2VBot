@@ -228,7 +228,7 @@ The system emits structured events for real-time communication:
   - Persistent model storage
   - Health checks and monitoring
 - **RunPod Optimization**: Optimized for RTX 2000 Ada deployment
-  - Startup script (start_runpod.sh) for easy deployment
+  - Startup script (start_aws.sh) for easy deployment
   - Environment configuration (env.example)
   - Comprehensive deployment documentation
 - **Performance Gains**:

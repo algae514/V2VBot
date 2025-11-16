@@ -24,6 +24,7 @@ torch>=2.1.0
 torchaudio>=2.1.0
 
 # ONNX Runtime with CUDA support for Silero VAD
+# Note: Only install onnxruntime-gpu, not both onnxruntime and onnxruntime-gpu
 onnxruntime-gpu>=1.16.0
 
 # CTranslate2 with CUDA support for Faster-Whisper

@@ -20,8 +20,9 @@ class AudioPipeline:
 		self.vad = SileroVAD(model_path=model_path, threshold=0.3, window_ms=20, end_ms=1500)
 		
 		# Use Faster Whisper for better accuracy with accents
+		# Auto-detect GPU - pass None to let WhisperFaster auto-detect
 		whisper_model = os.getenv("WHISPER_MODEL", "small.en")
-		self.whisper = WhisperFaster(model_size=whisper_model, device="cpu", compute_type="int8")
+		self.whisper = WhisperFaster(model_size=whisper_model, device=None, compute_type=None)
 		
 		# Initialize Gemini LLM
 		try:
@@ -32,8 +33,9 @@ class AudioPipeline:
 			self.llm = None
 		
 		# Initialize MeloTTS
+		# Auto-detect GPU - pass None to let MeloTTS auto-detect
 		try:
-			self.tts = MeloTTS(device="cpu", language="EN")
+			self.tts = MeloTTS(device=None, language="EN")
 			print(f"TTS enabled: MeloTTS")
 		except Exception as e:
 			print(f"TTS disabled: {e}")

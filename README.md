@@ -69,7 +69,7 @@ git clone <repo-url> V2VBot
 cd V2VBot
 cp env.example .env
 nano .env  # Add GEMINI_API_KEY
-bash start_runpod.sh
+bash start_aws.sh
 ```
 
 ## System Requirements
@@ -156,7 +156,7 @@ V2VBot/
 ├── docs/                # Documentation
 ├── Dockerfile           # Docker build
 ├── docker-compose.yml   # Docker orchestration
-├── start_runpod.sh     # RunPod startup script
+├── start_aws.sh        # AWS startup script
 └── env.example          # Environment template
 ```
 

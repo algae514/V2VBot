@@ -40,7 +40,7 @@ Created production-ready Docker deployment:
 
 ### 4. **RunPod Integration**
 
-- `start_runpod.sh`: Automated startup script
+- `start_aws.sh`: Automated startup script
   - GPU verification
   - Model downloading
   - Environment setup
@@ -76,7 +76,7 @@ Created production-ready Docker deployment:
 
 3. **Run**
    ```bash
-   bash start_runpod.sh
+   bash start_aws.sh
    ```
 
 Your app will be live at: `https://xxxxx-8080.proxy.runpod.net`
@@ -174,7 +174,7 @@ Your codebase is ready to deploy! Just:
 
 1. Get your Gemini API key: https://makersuite.google.com/app/apikey
 2. Create a RunPod pod with RTX 2000 Ada
-3. Run `bash start_runpod.sh`
+3. Run `bash start_aws.sh`
 4. Start chatting with your voice AI!
 
 ---

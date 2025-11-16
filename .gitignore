@@ -70,3 +70,9 @@ models/
 *.h5
 *.pb
 debug_audio/
+
+# SSL Certificates (keep private keys out of git)
+ssl/*.pem
+ssl/*.key
+ssl/*.crt
+ssl/*.csr
