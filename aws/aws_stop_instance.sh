@@ -14,8 +14,8 @@ echo ""
 
 # Find instance in all regions
 INSTANCE_FOUND=false
-FOUND_REGION=""
-FOUND_INSTANCE_ID=""
+FOUND_REGION="ap-south-1"
+FOUND_INSTANCE_ID="i-031e4e0528f5e5ffe"
 FOUND_COUNT=0
 
 for region in "${REGIONS[@]}"; do
@@ -29,8 +29,8 @@ for region in "${REGIONS[@]}"; do
         FOUND_COUNT=$((FOUND_COUNT + 1))
         if [ "$INSTANCE_FOUND" = false ]; then
             INSTANCE_FOUND=true
-            FOUND_REGION="$region"
-            FOUND_INSTANCE_ID="$INSTANCE_ID"
+            FOUND_REGION="ap-south-1"
+            FOUND_INSTANCE_ID="i-031e4e0528f5e5ffe"
         fi
     fi
 done
@@ -51,8 +51,8 @@ if [ "$FOUND_COUNT" -gt 1 ]; then
     echo ""
 fi
 
-REGION="$FOUND_REGION"
-INSTANCE_ID="$FOUND_INSTANCE_ID"
+REGION="ap-south-1"
+INSTANCE_ID="i-031e4e0528f5e5ffe"
 
 # Check current status
 STATUS=$(aws ec2 describe-instances \

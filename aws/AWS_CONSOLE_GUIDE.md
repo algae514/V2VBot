@@ -2,6 +2,21 @@
 
 When you run `./aws/aws_create_instance.sh`, you can verify the request in the AWS Console immediately.
 
+## SSH Connection
+
+**Important:** The key file may be region-specific. Check for:
+- `~/.ssh/v2vbot-key-ap-south-1.pem` (region-specific)
+- `~/.ssh/v2vbot-key.pem` (generic)
+
+Use the correct key file when connecting:
+```bash
+# For ap-south-1 region
+ssh -i ~/.ssh/v2vbot-key-ap-south-1.pem ubuntu@<PUBLIC_IP>
+
+# Or if using generic key
+ssh -i ~/.ssh/v2vbot-key.pem ubuntu@<PUBLIC_IP>
+```
+
 ## Where to See Your Instance Request
 
 ### Method 1: EC2 Instances Dashboard (Easiest)

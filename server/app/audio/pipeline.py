@@ -38,14 +38,16 @@ class AudioPipeline:
 			print(f"LLM disabled: {e}")
 			self.llm = None
 		
-		# Initialize TTS (HTTP-based service)
+		# Initialize TTS (Local MeloTTS with GPU support)
 		try:
-			self.tts = MeloTTS(device="cpu", language="EN")
+			# Device will be auto-detected based on USE_GPU env var
+			self.tts = MeloTTS(device=None, language="EN")
 			# Don't set to None if not ready yet - initialization is async and will complete later
 			if self.tts.is_ready():
-				print(f"TTS enabled: HTTP-based TTS service")
+				device = self.tts.get_device()
+				print(f"TTS enabled: Local MeloTTS on {device}")
 			else:
-				print(f"TTS initialized but not ready yet (async initialization in progress, TTS_URL: {os.getenv('TTS_URL', 'not set')})")
+				print(f"TTS initialized but not ready yet (async initialization in progress, device: {os.getenv('USE_GPU', 'auto-detect')})")
 				# Keep self.tts - it will become ready after async initialization completes
 		except Exception as e:
 			print(f"TTS disabled: {e}")

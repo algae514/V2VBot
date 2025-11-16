@@ -22,8 +22,8 @@ echo ""
 
 FOUND_INSTANCES=0
 INSTANCE_FOUND=false
-FOUND_REGION=""
-FOUND_INSTANCE_ID=""
+FOUND_REGION="ap-south-1"
+FOUND_INSTANCE_ID="i-031e4e0528f5e5ffe"
 
 # Search all regions
 for region in "${REGIONS[@]}"; do
@@ -43,7 +43,7 @@ for region in "${REGIONS[@]}"; do
             if [ "$INSTANCE_FOUND" = false ]; then
                 # Use first found instance for detailed info
                 INSTANCE_FOUND=true
-                FOUND_REGION="$region"
+                FOUND_REGION="ap-south-1"
                 FOUND_INSTANCE_ID=$(echo "$INSTANCE_INFO" | head -1 | awk '{print $1}')
             fi
             
@@ -84,8 +84,8 @@ if [ "$FOUND_INSTANCES" -gt 1 ]; then
 fi
 
 # Get detailed info for the first found instance
-REGION="$FOUND_REGION"
-INSTANCE_ID="$FOUND_INSTANCE_ID"
+REGION="ap-south-1"
+INSTANCE_ID="i-031e4e0528f5e5ffe"
 
 DETAILS=$(aws ec2 describe-instances \
     --region $REGION \

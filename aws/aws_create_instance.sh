@@ -60,27 +60,60 @@ if ! aws sts get-caller-identity &>/dev/null; then
     exit 1
 fi
 
-# Check if local key file exists
-KEY_FILE="$HOME/.ssh/$KEY_NAME.pem"
-if [ ! -f "$KEY_FILE" ]; then
-    echo "❌ Key file not found: $KEY_FILE"
+# Function to find the correct key file (check region-specific first, then generic)
+find_key_file() {
+    local region=$1
+    local region_specific_key="$HOME/.ssh/${KEY_NAME}-${region}.pem"
+    local generic_key="$HOME/.ssh/${KEY_NAME}.pem"
+    
+    # Check for region-specific key first
+    if [ -f "$region_specific_key" ]; then
+        echo "$region_specific_key"
+        return 0
+    # Fall back to generic key
+    elif [ -f "$generic_key" ]; then
+        echo "$generic_key"
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Check if local key file exists (try primary region first)
+PRIMARY_REGION="ap-south-1"
+KEY_FILE=$(find_key_file "$PRIMARY_REGION" || echo "")
+
+if [ -z "$KEY_FILE" ] || [ ! -f "$KEY_FILE" ]; then
+    echo "❌ Key file not found. Checked:"
+    echo "   - $HOME/.ssh/${KEY_NAME}-${PRIMARY_REGION}.pem"
+    echo "   - $HOME/.ssh/${KEY_NAME}.pem"
     echo ""
     echo "   Create the key pair first:"
-    echo "   aws ec2 create-key-pair --region ap-south-2 --key-name $KEY_NAME --query 'KeyMaterial' --output text > $KEY_FILE"
-    echo "   chmod 400 $KEY_FILE"
+    echo "   aws ec2 create-key-pair --region $PRIMARY_REGION --key-name $KEY_NAME --query 'KeyMaterial' --output text > $HOME/.ssh/${KEY_NAME}-${PRIMARY_REGION}.pem"
+    echo "   chmod 400 $HOME/.ssh/${KEY_NAME}-${PRIMARY_REGION}.pem"
     echo ""
     exit 1
 fi
 
+echo "🔑 Using key file: $KEY_FILE"
+
 # Function to ensure key pair exists in a region (import if needed)
 ensure_key_in_region() {
     local region=$1
+    local key_file_to_use="$KEY_FILE"
+    
+    # Try to find region-specific key file for this region
+    local region_specific_key="$HOME/.ssh/${KEY_NAME}-${region}.pem"
+    if [ -f "$region_specific_key" ]; then
+        key_file_to_use="$region_specific_key"
+    fi
+    
     if aws ec2 describe-key-pairs --region $region --key-names $KEY_NAME &>/dev/null; then
         return 0  # Key exists
     fi
     
     # Import key to region
-    PUBLIC_KEY=$(ssh-keygen -y -f "$KEY_FILE" 2>/dev/null || echo "")
+    PUBLIC_KEY=$(ssh-keygen -y -f "$key_file_to_use" 2>/dev/null || echo "")
     if [ -z "$PUBLIC_KEY" ]; then
         return 1  # Failed to extract public key
     fi
@@ -136,21 +169,141 @@ fi
 echo "   ✓ No existing instances found"
 echo ""
 
-# Define instance configurations: (INSTANCE_TYPE, GPU_TYPE, REGIONS)
-# Format: "instance_type|gpu_type|regions"
-# Note: ap-south-2 (Hyderabad) may not have GPU instances - trying ap-south-1 (Mumbai) first
-INSTANCE_CONFIGS=(
-    # g4dn - T4 GPU, cost-effective
-    "g4dn.xlarge|NVIDIA T4|ap-south-1,ap-south-2,eu-west-1,us-east-1,ap-southeast-1"
-    "g4dn.2xlarge|NVIDIA T4|ap-south-1,ap-south-2,eu-west-1,us-east-1,ap-southeast-1"
+# Global array to store available instance types
+AVAILABLE_TYPES=()
+
+# Function to get available spot instance types in a region
+get_available_spot_instances() {
+    local region=$1
+    local instance_families=("g" "vt")  # G and VT families based on quota
     
-    # g5 - A10G GPU, more powerful
-    "g5.xlarge|NVIDIA A10G|ap-south-1,ap-south-2,eu-west-1,us-east-1"
-    "g5.2xlarge|NVIDIA A10G|ap-south-1,ap-south-2,eu-west-1,us-east-1"
+    echo "🔍 Querying available spot instance types in $region..."
     
-    # p3 - V100 GPU, older but available
-    "p3.2xlarge|NVIDIA V100|ap-south-1,ap-south-2,eu-west-1,us-east-1"
-)
+    AVAILABLE_TYPES=()
+    
+    # Get all instance type offerings for the region
+    INSTANCE_OFFERINGS=$(aws ec2 describe-instance-type-offerings \
+        --region $region \
+        --location-type region \
+        --query 'InstanceTypeOfferings[*].InstanceType' \
+        --output text 2>/dev/null || echo "")
+    
+    if [ -z "$INSTANCE_OFFERINGS" ]; then
+        echo "   ⚠️  Could not query instance offerings for $region"
+        return 1
+    fi
+    
+    # Filter for G and VT families and check spot pricing
+    for family in "${instance_families[@]}"; do
+        # Get all instance types starting with the family prefix
+        FAMILY_TYPES=$(echo "$INSTANCE_OFFERINGS" | tr ' ' '\n' | grep "^${family}" | sort -V)
+        
+        for instance_type in $FAMILY_TYPES; do
+            # Check if spot pricing is available for this instance type
+            SPOT_PRICE=$(aws ec2 describe-spot-price-history \
+                --region $region \
+                --instance-types $instance_type \
+                --product-descriptions "Linux/UNIX" \
+                --max-items 1 \
+                --query 'SpotPriceHistory[0].SpotPrice' \
+                --output text 2>/dev/null || echo "")
+            
+            if [ -n "$SPOT_PRICE" ] && [ "$SPOT_PRICE" != "None" ] && [ "$SPOT_PRICE" != "" ]; then
+                AVAILABLE_TYPES+=("$instance_type")
+                echo "   ✓ Found: $instance_type (Spot price: $SPOT_PRICE USD/hour)"
+            fi
+        done
+    done
+    
+    if [ ${#AVAILABLE_TYPES[@]} -eq 0 ]; then
+        echo "   ⚠️  No G or VT spot instances available in $region"
+        return 1
+    fi
+    
+    echo "   ✓ Found ${#AVAILABLE_TYPES[@]} available spot instance type(s)"
+    return 0
+}
+
+# Function to get GPU type for an instance type
+get_gpu_type() {
+    local instance_type=$1
+    case $instance_type in
+        g4dn.*)
+            echo "NVIDIA T4"
+            ;;
+        g5.*)
+            echo "NVIDIA A10G"
+            ;;
+        g6.*)
+            echo "NVIDIA L4"
+            ;;
+        vt1.*)
+            echo "NVIDIA T4"
+            ;;
+        *)
+            echo "GPU"
+            ;;
+    esac
+}
+
+# Query available instances in primary region (ap-south-1)
+PRIMARY_REGION="ap-south-1"
+echo "📋 Checking available spot instance types in $PRIMARY_REGION..."
+echo ""
+
+if get_available_spot_instances "$PRIMARY_REGION"; then
+    echo ""
+    echo "✅ Building instance configurations from available types..."
+    
+    # Build INSTANCE_CONFIGS dynamically from available types
+    INSTANCE_CONFIGS=()
+    
+    # Prioritize common sizes: xlarge, 2xlarge, 4xlarge, large
+    PRIORITY_SIZES=("xlarge" "2xlarge" "4xlarge" "large" "8xlarge" "12xlarge" "16xlarge" "24xlarge")
+    
+    for size in "${PRIORITY_SIZES[@]}"; do
+        for instance_type in "${AVAILABLE_TYPES[@]}"; do
+            if [[ "$instance_type" == *"$size" ]]; then
+                GPU_TYPE=$(get_gpu_type "$instance_type")
+                # Prioritize ap-south-1, but also try other regions
+                INSTANCE_CONFIGS+=("$instance_type|$GPU_TYPE|ap-south-1,ap-south-2,eu-west-1,us-east-1,ap-southeast-1")
+            fi
+        done
+    done
+    
+    # Add any remaining types that don't match priority sizes
+    for instance_type in "${AVAILABLE_TYPES[@]}"; do
+        MATCHED=false
+        for size in "${PRIORITY_SIZES[@]}"; do
+            if [[ "$instance_type" == *"$size" ]]; then
+                MATCHED=true
+                break
+            fi
+        done
+        if [ "$MATCHED" = false ]; then
+            GPU_TYPE=$(get_gpu_type "$instance_type")
+            INSTANCE_CONFIGS+=("$instance_type|$GPU_TYPE|ap-south-1,ap-south-2,eu-west-1,us-east-1,ap-southeast-1")
+        fi
+    done
+    
+    echo "   ✓ Configured ${#INSTANCE_CONFIGS[@]} instance type(s) to try"
+    echo ""
+else
+    echo ""
+    echo "⚠️  Could not query available instances. Falling back to default configurations..."
+    echo ""
+    
+    # Fallback to default configurations (G family only, no P family)
+    INSTANCE_CONFIGS=(
+        # g4dn - T4 GPU, cost-effective
+        "g4dn.xlarge|NVIDIA T4|ap-south-1,ap-south-2,eu-west-1,us-east-1,ap-southeast-1"
+        "g4dn.2xlarge|NVIDIA T4|ap-south-1,ap-south-2,eu-west-1,us-east-1,ap-southeast-1"
+        
+        # g5 - A10G GPU, more powerful
+        "g5.xlarge|NVIDIA A10G|ap-south-1,ap-south-2,eu-west-1,us-east-1"
+        "g5.2xlarge|NVIDIA A10G|ap-south-1,ap-south-2,eu-west-1,us-east-1"
+    )
+fi
 
 # Try spot instances first (cheaper), then on-demand
 INSTANCE_TYPES=("spot" "on-demand")
@@ -473,7 +626,7 @@ if [ "$SUCCESS" = true ]; then
     echo "   Public IP: $PUBLIC_IP"
     echo ""
     echo "🔗 Connect via SSH:"
-    echo "   ssh -i ~/.ssh/$KEY_NAME.pem ubuntu@$PUBLIC_IP"
+    echo "   ssh -i $KEY_FILE ubuntu@$PUBLIC_IP"
     echo "   (or ec2-user@$PUBLIC_IP for Amazon Linux)"
     echo ""
     
@@ -524,7 +677,7 @@ if [ "$SUCCESS" = true ]; then
     echo ""
     
     echo "📚 Next steps:"
-    echo "   1. SSH into the instance: ssh -i ~/.ssh/$KEY_NAME.pem ubuntu@$PUBLIC_IP"
+    echo "   1. SSH into the instance: ssh -i $KEY_FILE ubuntu@$PUBLIC_IP"
     echo "   2. Clone your repository: git clone <your-repo-url> V2VBot"
     echo "   3. Setup and run: cd V2VBot && cp env.example .env && bash setup_server.sh"
     echo "   4. Or manually: python3 -m venv venv && source venv/bin/activate && pip install -r server/requirements.txt"

@@ -4,124 +4,135 @@ import numpy as np
 from typing import Optional, AsyncGenerator
 import time
 import logging
-import httpx
+import torch
 import soundfile as sf
+import tempfile
 
 logger = logging.getLogger(__name__)
 
 
 class MeloTTS:
     """
-    HTTP-based text-to-speech synthesis using RunPod TTS service.
-    Maintains compatibility with the existing MeloTTS interface.
+    Local MeloTTS-English v3 text-to-speech synthesis with streaming support and GPU acceleration.
     """
     
     def __init__(self, device: str = None, language: str = "EN", tts_url: str = None):
         """
-        Initialize HTTP-based TTS service.
+        Initialize MeloTTS model with automatic GPU detection.
         
         Args:
-            device: Ignored (kept for compatibility)
-            language: Ignored (kept for compatibility)
-            tts_url: TTS service URL (defaults to RunPod endpoint)
+            device: Device to run on ('cpu' or 'cuda', auto-detects if None)
+            language: Language code ('EN' for English)
+            tts_url: Ignored (kept for compatibility with old HTTP-based code)
         """
-        # Get TTS URL from environment or parameter
-        # TTS_URL environment variable must be set when RunPod service is available
-        self.tts_url = tts_url or os.getenv("TTS_URL")
-        if not self.tts_url:
-            logger.warning("TTS_URL not configured. TTS service will be unavailable.")
-            print("[TTS] ⚠️  TTS_URL not configured. Set TTS_URL environment variable to enable TTS.")
+        # Auto-detect GPU availability
+        if device is None:
+            use_gpu = os.getenv("USE_GPU", "false").lower() in ("true", "1", "yes")
+            self.device = "cuda" if (use_gpu and torch.cuda.is_available()) else "cpu"
+            logger.info(f"[TTS] Auto-detected device: {self.device}")
+        else:
+            self.device = device
         
-        self.sample_rate = 22050  # Default sample rate (common for TTS services)
-        self.is_ready_flag = False  # Will be set to True after initialization
-        self.http_client: Optional[httpx.AsyncClient] = None
+        self.language = language
+        self.model = None
+        self.speaker_id = None
+        self.sample_rate = 44100  # MeloTTS actual sample rate
+        self.is_ready_flag = False
         
-        # Initialize HTTP client asynchronously
-        asyncio.create_task(self._initialize_client())
+        # Initialize model asynchronously
+        asyncio.create_task(self._initialize_model())
     
-    async def _initialize_client(self):
-        """Initialize the HTTP client."""
-        if not self.tts_url:
-            self.is_ready_flag = False
-            return
-            
+    async def _initialize_model(self):
+        """Initialize the MeloTTS model with GPU support (async)."""
         init_start = time.time()
         try:
-            # Enable connection pooling and HTTP/2 for better performance
-            # Fallback to HTTP/1.1 if HTTP/2 is not available
-            # Try to enable HTTP/2, fallback to HTTP/1.1 if not available
-            http_version = "HTTP/1.1"  # Default
-            try:
-                # Check if h2 is available
-                try:
-                    import h2
-                    h2_available = True
-                    logger.debug(f"h2 package found: version {h2.__version__}")
-                except ImportError:
-                    h2_available = False
-                    logger.warning("h2 package not found, HTTP/2 will not be available")
-                
-                if h2_available:
-                    # Try to create HTTP/2 client
-                    try:
-                        self.http_client = httpx.AsyncClient(
-                            timeout=60.0,
-                            limits=httpx.Limits(max_keepalive_connections=10, max_connections=20),
-                            http2=True  # Enable HTTP/2 for connection multiplexing
-                        )
-                        http_version = "HTTP/2"
-                        logger.info("HTTP/2 client created successfully")
-                    except Exception as e:
-                        # httpx might raise an exception even if h2 is installed
-                        logger.warning(f"HTTP/2 client creation failed ({type(e).__name__}: {e}), falling back to HTTP/1.1")
-                        self.http_client = httpx.AsyncClient(
-                            timeout=60.0,
-                            limits=httpx.Limits(max_keepalive_connections=10, max_connections=20)
-                        )
-                        http_version = "HTTP/1.1"
-                else:
-                    # h2 not available, use HTTP/1.1
-                    self.http_client = httpx.AsyncClient(
-                        timeout=60.0,
-                        limits=httpx.Limits(max_keepalive_connections=10, max_connections=20)
-                    )
-                    http_version = "HTTP/1.1"
-            except Exception as e:
-                # Fallback to HTTP/1.1 on any error
-                logger.warning(f"HTTP client initialization error ({type(e).__name__}: {e}), using HTTP/1.1 fallback")
-                self.http_client = httpx.AsyncClient(
-                    timeout=60.0,
-                    limits=httpx.Limits(max_keepalive_connections=10, max_connections=20)
-                )
-                http_version = "HTTP/1.1"
+            # Import MeloTTS here to avoid blocking startup
+            from melo.api import TTS
             
-            init_latency = (time.time() - init_start) * 1000
-            print(f"[TTS] ⏱️  INIT: HTTP TTS service initialized in {init_latency:.2f}ms ({http_version})")
-            print(f"[TTS] 📍 TTS URL: {self.tts_url}")
-            logger.info(f"[TTS] HTTP client initialized in {init_latency:.2f}ms at {self.tts_url} ({http_version})")
+            logger.info(f"[TTS] Loading MeloTTS-English model on {self.device}...")
+            
+            # Show GPU info if available
+            if self.device == "cuda" and torch.cuda.is_available():
+                gpu_name = torch.cuda.get_device_name(0)
+                gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1024**3
+                print(f"[TTS] 🎮 GPU detected: {gpu_name} ({gpu_memory:.2f} GB)")
+                logger.info(f"[TTS] GPU detected: {gpu_name} ({gpu_memory:.2f} GB)")
+            
+            # Download required NLTK data if needed
+            try:
+                import nltk
+                nltk.download('averaged_perceptron_tagger_eng', quiet=True)
+            except Exception as e:
+                logger.warning(f"Failed to download NLTK data: {e}")
+            
+            # Initialize model in executor to avoid blocking
+            loop = asyncio.get_running_loop()
+            self.model = await loop.run_in_executor(
+                None,
+                lambda: TTS(language=self.language, device=self.device)
+            )
+            
+            # Get speaker IDs and use first available English speaker
+            speaker_ids = self.model.hps.data.spk2id
+            if speaker_ids:
+                self.speaker_id = list(speaker_ids.values())[0]
+                logger.info(f"[TTS] Using speaker ID: {self.speaker_id}")
+            else:
+                raise ValueError("No speakers available in MeloTTS model")
+            
+            elapsed = time.time() - init_start
+            print(f"[TTS] ✅ INIT: MeloTTS model loaded on {self.device} in {elapsed:.2f}s")
+            logger.info(f"[TTS] MeloTTS model loaded on {self.device} in {elapsed:.2f}s")
             self.is_ready_flag = True
+            
         except Exception as e:
-            init_latency = (time.time() - init_start) * 1000
-            print(f"[TTS] ❌ INIT ERROR after {init_latency:.2f}ms: {e}")
-            logger.exception(f"HTTP client initialization failed after {init_latency:.2f}ms")
-            self.is_ready_flag = False
+            elapsed = time.time() - init_start
+            logger.error(f"[TTS] Failed to load MeloTTS model on {self.device}: {e}")
+            print(f"[TTS] ❌ INIT ERROR after {elapsed:.2f}s: {e}")
+            
+            # Fallback to CPU if GPU fails
+            if self.device == "cuda":
+                logger.warning("[TTS] Falling back to CPU...")
+                print("[TTS] ⚠️  Falling back to CPU...")
+                self.device = "cpu"
+                try:
+                    from melo.api import TTS
+                    loop = asyncio.get_running_loop()
+                    self.model = await loop.run_in_executor(
+                        None,
+                        lambda: TTS(language=self.language, device=self.device)
+                    )
+                    speaker_ids = self.model.hps.data.spk2id
+                    if speaker_ids:
+                        self.speaker_id = list(speaker_ids.values())[0]
+                    elapsed = time.time() - init_start
+                    print(f"[TTS] ✅ INIT: MeloTTS model loaded on CPU (fallback) in {elapsed:.2f}s")
+                    logger.info(f"[TTS] MeloTTS model loaded on CPU (fallback) in {elapsed:.2f}s")
+                    self.is_ready_flag = True
+                except Exception as e2:
+                    elapsed = time.time() - init_start
+                    logger.error(f"[TTS] CPU fallback also failed: {e2}")
+                    print(f"[TTS] ❌ INIT ERROR after {elapsed:.2f}s: CPU fallback failed: {e2}")
+                    self.is_ready_flag = False
+            else:
+                self.is_ready_flag = False
     
     async def __aenter__(self):
         """Async context manager entry."""
         return self
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Async context manager exit - cleanup HTTP client."""
-        if self.http_client:
-            await self.http_client.aclose()
+        """Async context manager exit - cleanup."""
+        # MeloTTS doesn't require explicit cleanup
+        pass
     
     def is_ready(self) -> bool:
-        """Check if TTS service is ready."""
-        return self.is_ready_flag and self.http_client is not None
+        """Check if TTS model is ready."""
+        return self.is_ready_flag and self.model is not None
     
     async def synthesize_sentences(self, text: str, speed: float = 1.0) -> AsyncGenerator[np.ndarray, None]:
         """
-        Synthesize text sentence by sentence using parallel requests for better performance.
+        Synthesize text sentence by sentence.
         Results are returned in the correct order.
         
         Args:
@@ -149,7 +160,7 @@ class MeloTTS:
             print(f"[TTS] ⏱️  LATENCY: Sentence splitting took {split_latency:.2f}ms → {len(sentences)} sentences")
             logger.info(f"[LATENCY] TTS sentence splitting: {split_latency:.2f}ms, sentences={len(sentences)}")
             
-            # Filter out empty sentences and track original indices
+            # Filter out empty sentences
             sentence_tasks = []
             for i, sentence in enumerate(sentences):
                 if not sentence.strip():
@@ -159,10 +170,10 @@ class MeloTTS:
             if not sentence_tasks:
                 return
             
-            # Phase 2: Send all requests in parallel
+            # Synthesize sentences in parallel
             parallel_start = time.time()
-            print(f"[TTS] 🚀 PARALLEL: Sending {len(sentence_tasks)} requests simultaneously")
-            logger.info(f"[TTS] Phase 2: Sending {len(sentence_tasks)} parallel TTS requests")
+            print(f"[TTS] 🚀 PARALLEL: Synthesizing {len(sentence_tasks)} sentences simultaneously")
+            logger.info(f"[TTS] Phase 2: Synthesizing {len(sentence_tasks)} parallel TTS sentences")
             
             # Create async tasks for all sentences
             async def synthesize_with_index(index: int, sentence: str) -> tuple[int, np.ndarray, float]:
@@ -177,7 +188,7 @@ class MeloTTS:
             results = await asyncio.gather(*tasks)
             
             parallel_latency = (time.time() - parallel_start) * 1000
-            print(f"[TTS] ⏱️  PARALLEL: All {len(sentence_tasks)} requests completed in {parallel_latency:.2f}ms")
+            print(f"[TTS] ⏱️  PARALLEL: All {len(sentence_tasks)} sentences completed in {parallel_latency:.2f}ms")
             logger.info(f"[LATENCY] TTS parallel requests: {parallel_latency:.2f}ms for {len(sentence_tasks)} sentences")
             
             # Sort results by original index to maintain order
@@ -229,7 +240,7 @@ class MeloTTS:
     
     async def _synthesize_text(self, text: str, speed: float) -> np.ndarray:
         """
-        Synthesize text to audio via HTTP service (async operation).
+        Synthesize text to audio using local MeloTTS (async operation).
         
         Args:
             text: Text to synthesize
@@ -238,46 +249,37 @@ class MeloTTS:
         Returns:
             Audio data as numpy array
         """
-        if not self.http_client:
-            raise RuntimeError("HTTP client not initialized")
+        if not self.model:
+            raise RuntimeError("TTS model not initialized")
         
         total_start = time.time()
         try:
-            # Build JSON payload
-            payload = {
-                "text": text,
-                "speed": speed
-            }
+            # Create temporary file for synthesis
+            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_file:
+                tmp_path = tmp_file.name
             
-            # Make HTTP request with JSON body
-            http_start = time.time()
-            print(f"[TTS] ⏱️  HTTP: Calling TTS service: {self.tts_url} (text: {len(text)} chars, speed: {speed})")
-            logger.info(f"[TTS] HTTP request: {len(text)} chars, speed={speed}")
-            
-            response = await self.http_client.post(
-                self.tts_url,
-                json=payload,
-                headers={"Content-Type": "application/json"}
+            # Synthesize in executor to avoid blocking
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(
+                None,
+                lambda: self.model.tts_to_file(
+                    text=text,
+                    speaker_id=self.speaker_id,
+                    output_path=tmp_path,
+                    speed=speed
+                )
             )
-            response.raise_for_status()
             
-            http_latency = (time.time() - http_start) * 1000
-            response_size = len(response.content)
-            print(f"[TTS] ⏱️  HTTP: Response received in {http_latency:.2f}ms ({response_size} bytes, status: {response.status_code})")
-            logger.info(f"[TTS] HTTP response received in {http_latency:.2f}ms ({response_size} bytes)")
-            
-            # Read audio from response
-            # Assuming the response is WAV audio data
-            process_start = time.time()
-            import io
-            audio_bytes = io.BytesIO(response.content)
-            
-            # Read audio file using soundfile
+            # Read audio file
             read_start = time.time()
-            audio_data, sample_rate = sf.read(audio_bytes)
+            audio_data, sample_rate = sf.read(tmp_path)
             read_latency = (time.time() - read_start) * 1000
-            print(f"[TTS] ⏱️  AUDIO: Read audio in {read_latency:.2f}ms (shape: {audio_data.shape}, sr: {sample_rate}Hz)")
-            logger.info(f"[TTS] Audio read completed in {read_latency:.2f}ms")
+            
+            # Clean up temp file
+            try:
+                os.unlink(tmp_path)
+            except:
+                pass
             
             # Ensure it's float32 and mono
             convert_start = time.time()
@@ -286,7 +288,6 @@ class MeloTTS:
             
             audio_data = audio_data.astype(np.float32)
             convert_latency = (time.time() - convert_start) * 1000
-            print(f"[TTS] ⏱️  AUDIO: Converted to float32 mono in {convert_latency:.2f}ms (final shape: {audio_data.shape})")
             
             # Update sample rate if different
             if sample_rate != self.sample_rate:
@@ -294,17 +295,12 @@ class MeloTTS:
                 self.sample_rate = sample_rate
             
             total_latency = (time.time() - total_start) * 1000
-            process_latency = (time.time() - process_start) * 1000
-            print(f"[TTS] ⏱️  BREAKDOWN: HTTP={http_latency:.2f}ms, Processing={process_latency:.2f}ms, TOTAL={total_latency:.2f}ms")
-            logger.info(f"[TTS] Synthesis breakdown: HTTP={http_latency:.2f}ms, Processing={process_latency:.2f}ms, Total={total_latency:.2f}ms")
+            process_latency = (time.time() - read_start) * 1000
+            print(f"[TTS] ⏱️  BREAKDOWN: Synthesis={process_latency:.2f}ms, TOTAL={total_latency:.2f}ms")
+            logger.info(f"[TTS] Synthesis breakdown: Processing={process_latency:.2f}ms, Total={total_latency:.2f}ms")
             
             return audio_data
             
-        except httpx.HTTPError as e:
-            total_latency = (time.time() - total_start) * 1000
-            print(f"[TTS] ❌ HTTP ERROR after {total_latency:.2f}ms: {e}")
-            logger.error(f"[TTS] HTTP error after {total_latency:.2f}ms: {e}")
-            raise RuntimeError(f"TTS HTTP request failed: {e}")
         except Exception as e:
             total_latency = (time.time() - total_start) * 1000
             print(f"[TTS] ❌ ERROR after {total_latency:.2f}ms: {e}")
@@ -333,7 +329,7 @@ class MeloTTS:
             print(f"[TTS] ⏱️  START: Synthesizing complete text: '{text[:50]}{'...' if len(text) > 50 else ''}'")
             logger.info(f"[TTS] Starting complete synthesis of {len(text)} characters")
             
-            # Call HTTP service
+            # Call synthesis
             audio_data = await self._synthesize_text(text, speed)
             
             total_latency = (time.time() - total_start) * 1000
@@ -354,5 +350,5 @@ class MeloTTS:
         return self.sample_rate
     
     def get_device(self) -> str:
-        """Get the device being used (kept for compatibility)."""
-        return "http"
+        """Get the device being used."""
+        return self.device
