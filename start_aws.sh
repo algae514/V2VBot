@@ -23,6 +23,11 @@ fi
 # Activate virtual environment
 source venv/bin/activate
 
+# Set CUDA environment variables to prevent hanging
+export CUDA_VISIBLE_DEVICES=0
+export CUDA_LAUNCH_BLOCKING=0
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
 # Set up library paths for cuDNN and CUDA
 # Use direct path instead of find for speed
 if command -v nvidia-smi &> /dev/null; then

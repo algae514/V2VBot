@@ -416,10 +416,19 @@ if [ -d "/usr/local/cuda/lib64" ]; then
 fi
 export LD_LIBRARY_PATH="/usr/lib/x86_64-linux-gnu:/usr/local/lib:/usr/lib:${LD_LIBRARY_PATH}"
 
+# Set CUDA environment variables to prevent hanging
+export CUDA_LAUNCH_BLOCKING=0
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
 python3 << 'PYEOF'
 import sys
 import os
 import subprocess
+import time
+
+# Set CUDA environment variables to prevent hanging
+os.environ['CUDA_LAUNCH_BLOCKING'] = '0'
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 
 # Set library paths
 ld_paths = []
@@ -455,6 +464,14 @@ try:
             print(f"✓ PyTorch cuDNN Available: {torch.backends.cudnn.version()}")
         else:
             print("⚠ PyTorch cuDNN not available (may use system cuDNN)")
+        
+        # Initialize CUDA context (prevents hanging on first server use)
+        print("\n[Setup] Initializing CUDA context (this may take 10-30 seconds)...")
+        start = time.time()
+        dummy = torch.zeros(1).cuda()
+        torch.cuda.synchronize()
+        elapsed = time.time() - start
+        print(f"✓ CUDA context initialized in {elapsed:.2f}s")
 except ImportError as e:
     print(f"Error importing torch: {e}")
     sys.exit(1)
@@ -495,13 +512,35 @@ if cudnn_lib:
 else:
     print("ℹ System cuDNN library not found (PyTorch uses bundled cuDNN)")
 
-# Test 5: MeloTTS import
+# Test 5: MeloTTS import and pre-initialization
 try:
     from melo.api import TTS
     print("✓ MeloTTS import successful")
+    
+    # Pre-download and initialize MeloTTS models (prevents server hanging on first use)
+    if cuda_available:
+        print("\n[Setup] Pre-initializing MeloTTS on GPU (this may take 30-60 seconds)...")
+        print("        Downloading models from HuggingFace and compiling for CUDA...")
+        start = time.time()
+        try:
+            tts = TTS(language='EN', device='cuda')
+            # Run a test synthesis to ensure everything is cached
+            _ = tts.tts_to_file("Test.", speaker="EN-US", output_path="/tmp/test_tts.wav", quiet=True)
+            os.remove("/tmp/test_tts.wav")
+            elapsed = time.time() - start
+            print(f"✓ MeloTTS pre-initialized on GPU in {elapsed:.2f}s")
+            print("  Models cached - server will start quickly!")
+        except Exception as e:
+            print(f"⚠ MeloTTS GPU pre-initialization had issues: {e}")
+            print("  Server will initialize models on first use (may take longer)")
+    else:
+        print("ℹ GPU not available, MeloTTS will use CPU")
 except ImportError as e:
     print(f"✗ MeloTTS import failed: {e}")
     sys.exit(1)
+except Exception as e:
+    print(f"⚠ MeloTTS test had issues: {e}")
+    print("  Continuing anyway - server will initialize models on first use")
 PYEOF
 
 if [ $? -eq 0 ]; then
@@ -617,6 +656,8 @@ User=${SUDO_USER:-root}
 WorkingDirectory=$APP_DIR
 Environment="PATH=$APP_DIR/venv/bin:/usr/local/bin:/usr/bin:/bin"
 Environment="LD_LIBRARY_PATH=${LD_LIBRARY_PATH_VAR}"
+Environment="CUDA_LAUNCH_BLOCKING=0"
+Environment="PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True"
 ExecStart=$APP_DIR/venv/bin/python -m uvicorn server.app.main:app --host 0.0.0.0 --port 8080 --workers 1 $SSL_ARGS
 Restart=always
 RestartSec=10
