@@ -24,7 +24,7 @@ A real-time voice-to-voice conversational AI system with GPU acceleration, optim
 
 🎯 **Production Ready**
 - Docker deployment with GPU support
-- RunPod optimized with startup scripts
+- GCP deployment with start/stop scripts
 - Comprehensive monitoring and logging
 - Graceful error handling and fallbacks
 
@@ -58,19 +58,54 @@ docker-compose up -d
 docker-compose logs -f
 ```
 
-### RunPod Deployment
+### GCP Deployment (Cost-Optimized)
 
-See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed RunPod setup instructions.
+Deploy on Google Cloud Platform with minimal GPU VM that you can start/stop on-demand to save costs.
 
-Quick deploy:
+**Quick Setup:**
 ```bash
-cd /workspace
-git clone <repo-url> V2VBot
-cd V2VBot
-cp env.example .env
-nano .env  # Add GEMINI_API_KEY
-bash start_runpod.sh
+# 1. Setup GCP authentication
+./gcp/gcp_setup.sh
+
+# 2. Create GPU VM instance
+./gcp/gcp_create_vm.sh
+
+# 3. Start VM when needed
+./gcp/gcp_start_vm.sh
+
+# 4. Stop VM when done (saves costs)
+./gcp/gcp_stop_vm.sh
 ```
+
+**Cost (India Region)**: ~₹73/hour (~$0.90/hour) when running, ₹0 when stopped (only disk storage ~₹15/month)
+
+See [docs/gcp-deployment.md](docs/gcp-deployment.md) for detailed instructions.
+
+### AWS EC2 Deployment (Cost-Optimized)
+
+Deploy on AWS EC2 with GPU instances that you can start/stop on-demand to save costs.
+
+**Quick Setup:**
+```bash
+# 1. Setup AWS authentication
+./aws/aws_setup.sh
+
+# 2. Import existing key pair to all regions (one-time)
+./aws/aws_account_setup.sh
+
+# 3. Create GPU EC2 instance
+./aws/aws_create_instance.sh
+
+# 4. Start instance when needed
+./aws/aws_start_instance.sh
+
+# 5. Stop instance when done (saves costs)
+./aws/aws_stop_instance.sh
+```
+
+**Cost (India Region)**: ~₹70-80/hour (~$0.85-0.95/hour) when running, ₹0 when stopped (only EBS storage ~₹10/month)
+
+See [docs/aws-deployment.md](docs/aws-deployment.md) for detailed instructions.
 
 ## System Requirements
 
@@ -131,7 +166,9 @@ VAD_TURN_END_MS=2000   # Turn end pause
 
 ## Documentation
 
-- **[Deployment Guide](DEPLOYMENT.md)**: Quick start for RunPod
+- **[GCP Console Guide](docs/gcp-console-guide.md)**: Step-by-step VM creation from web console
+- **[GCP Deployment](docs/gcp-deployment.md)**: Cost-optimized GCP setup with start/stop scripts
+- **[AWS Deployment](docs/aws-deployment.md)**: Cost-optimized AWS EC2 setup with start/stop scripts
 - **[GPU Deployment](docs/gpu-deployment.md)**: Comprehensive GPU setup
 - **[Architecture](docs/architecture-rules.md)**: System design principles
 - **[Current Status](docs/current-status.md)**: Implementation status
@@ -156,7 +193,18 @@ V2VBot/
 ├── docs/                # Documentation
 ├── Dockerfile           # Docker build
 ├── docker-compose.yml   # Docker orchestration
-├── start_runpod.sh     # RunPod startup script
+├── gcp/                # GCP deployment scripts
+│   ├── gcp_setup.sh
+│   ├── gcp_create_vm.sh
+│   ├── gcp_start_vm.sh
+│   ├── gcp_stop_vm.sh
+│   └── ...
+├── aws/                # AWS deployment scripts
+│   ├── aws_setup.sh
+│   ├── aws_create_instance.sh
+│   ├── aws_start_instance.sh
+│   ├── aws_stop_instance.sh
+│   └── ...
 └── env.example          # Environment template
 ```
 
@@ -234,7 +282,7 @@ Contributions welcome! Please:
 - [x] Voice-to-voice pipeline
 - [x] GPU acceleration
 - [x] Docker deployment
-- [x] RunPod support
+- [x] GCP deployment with cost optimization
 - [ ] Metrics and monitoring
 - [ ] Multi-language support
 - [ ] Model quantization
