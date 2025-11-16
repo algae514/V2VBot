@@ -31,6 +31,10 @@ print_info() {
 # Check if running as root
 if [ "$EUID" -eq 0 ]; then 
     print_info "Running as root user - this is fine for RunPod environments"
+    SUDO_CMD=""
+else
+    SUDO_CMD="sudo"
+    print_info "Running as regular user - will use sudo for system commands"
 fi
 
 # 1. System Information
@@ -60,13 +64,13 @@ echo ""
 
 # 3. Update system packages
 print_info "Updating system packages..."
-apt-get update -qq
+$SUDO_CMD apt-get update -qq
 print_success "System packages updated"
 echo ""
 
 # 4. Install system dependencies
 print_info "Installing system dependencies..."
-apt-get install -y -qq \
+$SUDO_CMD apt-get install -y -qq \
     python3 \
     python3-pip \
     python3-venv \
@@ -137,39 +141,45 @@ echo "Python version: $PYTHON_VERSION"
 print_success "Python is available"
 echo ""
 
-# 6. Create application directory
-APP_DIR="/workspace/V2VBot"
-print_info "Setting up application directory: $APP_DIR"
-
-if [ -d "$APP_DIR" ]; then
-    print_info "Directory already exists. Using existing directory."
+# 6. Determine application directory
+# If current directory is a git repo, use it; otherwise use /workspace/V2VBot
+if [ -d ".git" ]; then
+    APP_DIR="$(pwd)"
+    print_info "Using current directory as application directory: $APP_DIR"
 else
-    mkdir -p /workspace
-    print_success "Created /workspace directory"
-fi
-
-cd /workspace
-echo "Current directory: $(pwd)"
-echo ""
-
-# 7. Clone or update repository
-if [ -d "$APP_DIR/.git" ]; then
-    print_info "Repository already exists. Pulling latest changes..."
-    cd $APP_DIR
-    git pull
-    print_success "Repository updated"
-else
-    print_info "Cloning repository..."
-    print_error "Please clone your repository manually:"
-    echo "  cd /workspace"
-    echo "  git clone <your-repo-url> V2VBot"
+    APP_DIR="/workspace/V2VBot"
+    print_info "Setting up application directory: $APP_DIR"
+    
+    if [ -d "$APP_DIR" ]; then
+        print_info "Directory already exists. Using existing directory."
+    else
+        $SUDO_CMD mkdir -p /workspace
+        print_success "Created /workspace directory"
+    fi
+    
+    cd /workspace
+    echo "Current directory: $(pwd)"
     echo ""
-    echo "After cloning, run this script again or continue with manual setup."
-    exit 0
+    
+    # 7. Clone or update repository
+    if [ -d "$APP_DIR/.git" ]; then
+        print_info "Repository already exists. Pulling latest changes..."
+        cd $APP_DIR
+        git pull
+        print_success "Repository updated"
+    else
+        print_info "Cloning repository..."
+        print_error "Please clone your repository manually:"
+        echo "  cd /workspace"
+        echo "  git clone <your-repo-url> V2VBot"
+        echo ""
+        echo "After cloning, run this script again or continue with manual setup."
+        exit 0
+    fi
+    
+    cd $APP_DIR
+    echo ""
 fi
-
-cd $APP_DIR
-echo ""
 
 # 8. Create Python virtual environment
 print_info "Creating Python virtual environment..."
