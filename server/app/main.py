@@ -126,9 +126,11 @@ async def offer(request: Request) -> JSONResponse:
 
 		@pc.on("track")
 		async def on_track(track: MediaStreamTrack):
-			logger.info("Track received: kind=%s", track.kind)
+			logger.info("Track received: kind=%s, id=%s", track.kind, track.id)
 			if track.kind == "audio":
+				logger.info("Creating AudioPipeline for audio track")
 				pipeline = AudioPipeline(lambda payload: refs["ch"] and refs["ch"].send(payload))
+				logger.info("AudioPipeline created, starting audio processing loop")
 				await media_blackhole.start()
 				actual_sample_rate = None
 				is_stereo = False
@@ -194,6 +196,8 @@ async def offer(request: Request) -> JSONResponse:
 							# Only log if frame processing is unusually slow (>50ms) - normal frames are ~20ms
 							if total_frame_latency > 50.0:
 								logger.info(f"[LATENCY] Frame processing (slow): receive={frame_receive_latency:.2f}ms, to_ndarray={to_ndarray_latency:.2f}ms, stereo={stereo_latency:.2f}ms, convert={convert_latency:.2f}ms, resample={resample_latency:.2f}ms, pipeline={pipeline_latency:.2f}ms, TOTAL={total_frame_latency:.2f}ms")
+						else:
+							logger.warning(f"Empty audio frame after resampling: input_rate={actual_sample_rate}, input_samples={len(pcm_f32)}")
 				except Exception as e:
 					logger.exception("audio loop error")
 					print("audio loop error", e)

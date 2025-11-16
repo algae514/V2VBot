@@ -2,6 +2,9 @@ import os
 import numpy as np
 import onnxruntime as ort
 from typing import Optional, Tuple
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class SileroVAD:
@@ -22,9 +25,9 @@ class SileroVAD:
 			available_providers = ort.get_available_providers()
 			if "CUDAExecutionProvider" in available_providers:
 				providers.append("CUDAExecutionProvider")
-				print("Using CUDA for Silero VAD")
+				logger.info("Using CUDA for Silero VAD")
 			else:
-				print("CUDA not available for ONNX, using CPU for VAD")
+				logger.info("CUDA not available for ONNX, using CPU for VAD")
 		
 		# Always add CPU as fallback
 		providers.append("CPUExecutionProvider")
@@ -33,11 +36,12 @@ class SileroVAD:
 			if os.path.exists(model_path):
 				self.session = ort.InferenceSession(model_path, providers=providers)
 				actual_provider = self.session.get_providers()[0]
-				print(f"Silero VAD loaded with provider: {actual_provider}")
+				logger.info(f"Silero VAD loaded with provider: {actual_provider}, model_path: {model_path}")
 			else:
+				logger.error(f"Silero VAD model not found at: {model_path}")
 				self.session = None
 		except Exception as e:
-			print(f"Failed to load Silero VAD model: {e}")
+			logger.error(f"Failed to load Silero VAD model: {e}", exc_info=True)
 			self.session = None
 		self.threshold = thr
 		self.window_samples = int(16000 * wnd / 1000)
@@ -52,7 +56,7 @@ class SileroVAD:
 		self._state = np.zeros((2, 1, 128), dtype=np.float32)
 		self._sample_rate = np.array(16000, dtype=np.int64)
 		
-		print(f"VAD initialized: utterance_end={endw}ms, turn_end={turn_endw}ms")
+		logger.info(f"VAD initialized: threshold={self.threshold}, window={wnd}ms ({self.window_samples} samples), utterance_end={endw}ms ({self.end_samples} samples), turn_end={turn_endw}ms ({self.turn_end_samples} samples), ready={self.is_ready()}")
 
 	def is_ready(self) -> bool:
 		return self.session is not None
@@ -67,6 +71,10 @@ class SileroVAD:
 
 	def process(self, audio_16k: np.ndarray) -> Tuple[bool, Optional[str]]:
 		# audio_16k: 1D float32 in [-1,1], length = window_samples
+		# Log frame size mismatch for debugging
+		if len(audio_16k) != self.window_samples:
+			logger.debug(f"VAD frame size mismatch: expected {self.window_samples}, got {len(audio_16k)} samples")
+		
 		if self.session is None:
 			# Fallback: simple energy gate
 			energy = float(np.mean(np.abs(audio_16k)))
@@ -91,7 +99,7 @@ class SileroVAD:
 				speech_prob = float(probs[0, 0])
 				voiced = speech_prob > self.threshold
 			except Exception as e:
-				print(f"Silero VAD error: {e}, falling back to energy detection")
+				logger.warning(f"Silero VAD error: {e}, falling back to energy detection", exc_info=True)
 				# Fallback to energy detection if Silero fails
 				energy = float(np.mean(np.abs(audio_16k)))
 				voiced = energy > float(os.getenv("VAD_ENERGY_FALLBACK", 0.05))

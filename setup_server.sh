@@ -1,6 +1,6 @@
 #!/bin/bash
 # V2VBot Server Setup Script (Non-Docker)
-# Run this script after SSH into your RunPod server
+# Run this script after SSH into your AWS/RunPod server
 
 set -e
 
@@ -30,7 +30,7 @@ print_info() {
 
 # Check if running as root
 if [ "$EUID" -eq 0 ]; then 
-    print_info "Running as root user - this is fine for RunPod environments"
+    print_info "Running as root user - this is fine for AWS/RunPod environments"
     SUDO_CMD=""
 else
     SUDO_CMD="sudo"
@@ -95,11 +95,146 @@ $SUDO_CMD apt-get install -y -qq \
     libmecab2 \
     libmecab-dev \
     mecab-ipadic-utf8 \
+    lsb-release \
     > /dev/null 2>&1
 print_success "System dependencies installed"
 echo ""
 
-# 4a. Configure mecab library cache
+# 4a. Install cuDNN libraries (required for GPU-accelerated deep learning)
+print_info "Installing cuDNN libraries..."
+if command -v nvidia-smi &> /dev/null; then
+    # Detect Ubuntu version for CUDA repository
+    UBUNTU_VERSION=$(lsb_release -rs 2>/dev/null || echo "22.04")
+    UBUNTU_CODENAME=$(lsb_release -cs 2>/dev/null || echo "jammy")
+    
+    # Check if CUDA repository is already configured
+    CUDA_REPO_EXISTS=false
+    if [ -d /etc/apt/sources.list.d ]; then
+        for repo_file in /etc/apt/sources.list.d/cuda*.list /etc/apt/sources.list.d/cuda-ubuntu*.list; do
+            if [ -f "$repo_file" ]; then
+                CUDA_REPO_EXISTS=true
+                break
+            fi
+        done
+    fi
+    
+    if [ "$CUDA_REPO_EXISTS" = false ]; then
+        print_info "Adding NVIDIA CUDA repository for Ubuntu $UBUNTU_VERSION..."
+        CUDA_KEYRING_URL="https://developer.download.nvidia.com/compute/cuda/repos/ubuntu${UBUNTU_VERSION//./}/x86_64/cuda-keyring_1.1-1_all.deb"
+        
+        if wget -q "$CUDA_KEYRING_URL" -O /tmp/cuda-keyring.deb 2>/dev/null; then
+            $SUDO_CMD dpkg -i /tmp/cuda-keyring.deb > /dev/null 2>&1 || {
+                print_error "Failed to install CUDA keyring"
+                rm -f /tmp/cuda-keyring.deb
+            }
+            rm -f /tmp/cuda-keyring.deb
+            $SUDO_CMD apt-get update -qq > /dev/null 2>&1 || true
+            print_success "CUDA repository added"
+        else
+            print_info "Could not download CUDA keyring, trying alternative method..."
+            # Try alternative keyring URL
+            ALTERNATIVE_URL="https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb"
+            if wget -q "$ALTERNATIVE_URL" -O /tmp/cuda-keyring.deb 2>/dev/null; then
+                $SUDO_CMD dpkg -i /tmp/cuda-keyring.deb > /dev/null 2>&1 || true
+                rm -f /tmp/cuda-keyring.deb
+                $SUDO_CMD apt-get update -qq > /dev/null 2>&1 || true
+                print_success "CUDA repository added (alternative method)"
+            else
+                print_info "CUDA repository setup skipped (may already be configured or network issue)"
+            fi
+        fi
+    else
+        print_info "CUDA repository already configured"
+    fi
+    
+    # Try to install cuDNN 9 (for CUDA 12.x) - REQUIRED for PyTorch 2.9+
+    CUDNN_INSTALLED=false
+    print_info "Installing cuDNN libraries..."
+    
+    # Check what's already installed
+    if dpkg -l | grep -q "libcudnn9-cuda-12\|libcudnn9"; then
+        print_info "cuDNN 9 already installed"
+        CUDNN_INSTALLED=true
+    elif dpkg -l | grep -q "libcudnn8"; then
+        print_info "cuDNN 8 detected, installing cuDNN 9 for PyTorch 2.9+ compatibility..."
+        # Install cuDNN 9 for CUDA 12 (can coexist with cuDNN 8)
+        if $SUDO_CMD apt-get install -y libcudnn9-cuda-12 2>&1 | grep -q "Setting up\|is already"; then
+            print_success "cuDNN 9 (CUDA 12) installed"
+            CUDNN_INSTALLED=true
+        else
+            # Try generic libcudnn9 package
+            if $SUDO_CMD apt-get install -y libcudnn9 2>&1 | grep -q "Setting up\|is already"; then
+                print_success "cuDNN 9 installed"
+                CUDNN_INSTALLED=true
+            else
+                print_error "Failed to install cuDNN 9"
+                print_info "cuDNN 8 may work but PyTorch 2.9+ prefers cuDNN 9"
+            fi
+        fi
+    else
+        # First, try cuDNN 9 for CUDA 12 (required for PyTorch 2.9+)
+        print_info "Installing cuDNN 9 for CUDA 12..."
+        if $SUDO_CMD apt-get install -y libcudnn9-cuda-12 2>&1 | grep -q "Setting up\|is already"; then
+            print_success "cuDNN 9 (CUDA 12) installed"
+            CUDNN_INSTALLED=true
+        # Try generic libcudnn9 package
+        elif $SUDO_CMD apt-get install -y libcudnn9 2>&1 | grep -q "Setting up\|is already"; then
+            print_success "cuDNN 9 installed"
+            CUDNN_INSTALLED=true
+        # Fallback to cuDNN 8 (for CUDA 11.x and 12.0) - not recommended for PyTorch 2.9+
+        elif $SUDO_CMD apt-get install -y libcudnn8 2>&1 | grep -q "Setting up\|is already"; then
+            print_success "cuDNN 8 installed (fallback - may cause issues with PyTorch 2.9+)"
+            CUDNN_INSTALLED=true
+            print_info "Warning: PyTorch 2.9+ expects cuDNN 9. Consider upgrading to cuDNN 9"
+        else
+            print_error "cuDNN installation from repository failed"
+            print_info "PyTorch includes bundled cuDNN, but system libraries may be needed"
+            print_info "If you encounter cuDNN errors, try: sudo apt-get install -y libcudnn9-cuda-12"
+        fi
+    fi
+    
+    # Update library cache (critical for cuDNN to be found)
+    print_info "Updating library cache..."
+    $SUDO_CMD ldconfig
+    print_success "Library cache updated"
+    
+    # Verify cuDNN installation and set LD_LIBRARY_PATH
+    CUDNN_LIB=$(find /usr/lib/x86_64-linux-gnu /usr/local/cuda*/lib64 -name "libcudnn*.so*" 2>/dev/null | head -n 1)
+    if [ -n "$CUDNN_LIB" ]; then
+        CUDNN_DIR=$(dirname "$CUDNN_LIB")
+        export LD_LIBRARY_PATH="${CUDNN_DIR}:${LD_LIBRARY_PATH}"
+        print_success "cuDNN library found at: $CUDNN_LIB"
+        
+        # Also add to ld.so.conf for permanent configuration
+        if [ "$EUID" -eq 0 ]; then
+            if ! grep -q "$CUDNN_DIR" /etc/ld.so.conf.d/*.conf 2>/dev/null; then
+                echo "$CUDNN_DIR" > /etc/ld.so.conf.d/cudnn.conf
+                ldconfig
+            fi
+        else
+            if ! grep -q "$CUDNN_DIR" /etc/ld.so.conf.d/*.conf 2>/dev/null; then
+                echo "$CUDNN_DIR" | $SUDO_CMD tee /etc/ld.so.conf.d/cudnn.conf > /dev/null
+                $SUDO_CMD ldconfig 2>/dev/null || true
+            fi
+        fi
+    else
+        if [ "$CUDNN_INSTALLED" = true ]; then
+            print_info "cuDNN installed but library not found in standard locations"
+            print_info "This is normal - PyTorch will use its bundled cuDNN"
+        fi
+    fi
+    
+    # Add standard CUDA library paths to LD_LIBRARY_PATH
+    if [ -d "/usr/local/cuda/lib64" ]; then
+        export LD_LIBRARY_PATH="/usr/local/cuda/lib64:${LD_LIBRARY_PATH}"
+    fi
+    export LD_LIBRARY_PATH="/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH}"
+else
+    print_info "No GPU detected, skipping cuDNN installation"
+fi
+echo ""
+
+# 4b. Configure mecab library cache
 print_info "Configuring mecab library..."
 MECAB_LIB=$(find /usr/lib /usr/local/lib -name "libmecab.so.2*" 2>/dev/null | head -n 1)
 if [ -n "$MECAB_LIB" ]; then
@@ -109,8 +244,8 @@ if [ -n "$MECAB_LIB" ]; then
         echo "$MECAB_DIR" > /etc/ld.so.conf.d/mecab.conf
         ldconfig
     else
-        echo "$MECAB_DIR" | sudo tee /etc/ld.so.conf.d/mecab.conf > /dev/null
-        sudo ldconfig 2>/dev/null || ldconfig 2>/dev/null || true
+        echo "$MECAB_DIR" | $SUDO_CMD tee /etc/ld.so.conf.d/mecab.conf > /dev/null
+        $SUDO_CMD ldconfig 2>/dev/null || ldconfig 2>/dev/null || true
     fi
     export LD_LIBRARY_PATH="${MECAB_DIR}:${LD_LIBRARY_PATH}"
     print_success "Mecab library configured"
@@ -120,7 +255,7 @@ else
 fi
 echo ""
 
-# 4b. Install Rust compiler (needed for tokenizers)
+# 4c. Install Rust compiler (needed for tokenizers)
 print_info "Installing Rust compiler..."
 if ! command -v rustc &> /dev/null; then
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
@@ -201,9 +336,17 @@ echo ""
 # 10. Install Python dependencies
 print_info "Installing Python dependencies (this may take a few minutes)..."
 # Install base requirements first
-pip install --no-cache-dir --only-binary=tokenizers -r server/requirements.txt || {
+pip install --no-cache-dir -r server/requirements.txt || {
     print_error "Failed to install base Python dependencies"
     exit 1
+}
+
+# Ensure onnxruntime-gpu is installed (may be needed if requirements.txt has issues)
+# Uninstall regular onnxruntime first to avoid conflicts
+print_info "Verifying onnxruntime-gpu installation..."
+pip uninstall -y onnxruntime 2>/dev/null || true
+pip install --no-cache-dir --upgrade onnxruntime-gpu>=1.16.0 || {
+    print_info "onnxruntime-gpu installation had issues, but continuing..."
 }
 
 # Install MeloTTS without dependencies to avoid transformers conflict
@@ -215,7 +358,7 @@ pip install --no-cache-dir --no-deps git+https://github.com/myshell-ai/MeloTTS.g
 
 # Install MeloTTS dependencies (excluding transformers which is already installed)
 print_info "Installing MeloTTS dependencies..."
-pip install --no-cache-dir --only-binary=tokenizers \
+pip install --no-cache-dir \
     anyascii==0.3.2 \
     cached_path \
     cn2an==0.5.22 \
@@ -257,18 +400,46 @@ print_info "Verifying GPU support and TTS installation..."
 MECAB_LIB=$(find /usr/lib /usr/local/lib -name "libmecab.so.2*" 2>/dev/null | head -n 1)
 if [ -n "$MECAB_LIB" ]; then
     MECAB_DIR=$(dirname "$MECAB_LIB")
-    export LD_LIBRARY_PATH="${MECAB_DIR}:/usr/lib/x86_64-linux-gnu:/usr/local/lib:/usr/lib:${LD_LIBRARY_PATH}"
+    export LD_LIBRARY_PATH="${MECAB_DIR}:${LD_LIBRARY_PATH}"
 fi
+
+# Add cuDNN to library path if available
+CUDNN_LIB=$(find /usr/lib/x86_64-linux-gnu /usr/local/cuda*/lib64 -name "libcudnn*.so*" 2>/dev/null | head -n 1)
+if [ -n "$CUDNN_LIB" ]; then
+    CUDNN_DIR=$(dirname "$CUDNN_LIB")
+    export LD_LIBRARY_PATH="${CUDNN_DIR}:${LD_LIBRARY_PATH}"
+fi
+
+# Add standard CUDA library paths
+if [ -d "/usr/local/cuda/lib64" ]; then
+    export LD_LIBRARY_PATH="/usr/local/cuda/lib64:${LD_LIBRARY_PATH}"
+fi
+export LD_LIBRARY_PATH="/usr/lib/x86_64-linux-gnu:/usr/local/lib:/usr/lib:${LD_LIBRARY_PATH}"
 
 python3 << 'PYEOF'
 import sys
 import os
+import subprocess
 
-# Set library path for mecab
+# Set library paths
+ld_paths = []
 mecab_lib = os.popen("find /usr/lib /usr/local/lib -name 'libmecab.so.2*' 2>/dev/null | head -n 1").read().strip()
 if mecab_lib:
     mecab_dir = os.path.dirname(mecab_lib)
-    os.environ['LD_LIBRARY_PATH'] = f"{mecab_dir}:{os.environ.get('LD_LIBRARY_PATH', '')}"
+    ld_paths.append(mecab_dir)
+
+# Add cuDNN paths
+cudnn_lib = os.popen("find /usr/lib/x86_64-linux-gnu /usr/local/cuda*/lib64 -name 'libcudnn*.so*' 2>/dev/null | head -n 1").read().strip()
+if cudnn_lib:
+    cudnn_dir = os.path.dirname(cudnn_lib)
+    ld_paths.append(cudnn_dir)
+
+# Add CUDA paths
+if os.path.isdir("/usr/local/cuda/lib64"):
+    ld_paths.append("/usr/local/cuda/lib64")
+ld_paths.extend(["/usr/lib/x86_64-linux-gnu", "/usr/local/lib", "/usr/lib"])
+
+os.environ['LD_LIBRARY_PATH'] = ":".join(ld_paths + [os.environ.get('LD_LIBRARY_PATH', '')])
 
 # Test 1: PyTorch and CUDA
 try:
@@ -279,6 +450,11 @@ try:
         print(f"GPU Device: {torch.cuda.get_device_name(0)}")
         print(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB")
         print(f"CUDA Version: {torch.version.cuda}")
+        # Check cuDNN in PyTorch
+        if torch.backends.cudnn.is_available():
+            print(f"✓ PyTorch cuDNN Available: {torch.backends.cudnn.version()}")
+        else:
+            print("⚠ PyTorch cuDNN not available (may use system cuDNN)")
 except ImportError as e:
     print(f"Error importing torch: {e}")
     sys.exit(1)
@@ -289,12 +465,21 @@ try:
     providers = ort.get_available_providers()
     print(f"ONNX Runtime Providers: {providers}")
     if "CUDAExecutionProvider" in providers:
-        print("✓ CUDA available for ONNX Runtime")
+        print("✓ CUDA available for ONNX Runtime (VAD will use GPU)")
     else:
         print("⚠ CUDA not available for ONNX Runtime, will use CPU for VAD")
+        print("  Install onnxruntime-gpu: pip install onnxruntime-gpu")
 except ImportError as e:
-    print(f"Error importing onnxruntime: {e}")
-    sys.exit(1)
+    print(f"✗ Error importing onnxruntime: {e}")
+    print("  Installing onnxruntime-gpu...")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "onnxruntime-gpu>=1.16.0"])
+    import onnxruntime as ort
+    providers = ort.get_available_providers()
+    print(f"ONNX Runtime Providers (after install): {providers}")
+    if "CUDAExecutionProvider" in providers:
+        print("✓ CUDA available for ONNX Runtime (VAD will use GPU)")
+    else:
+        print("⚠ CUDA still not available for ONNX Runtime")
 
 # Test 3: MeCab library
 try:
@@ -304,7 +489,13 @@ try:
 except Exception as e:
     print(f"⚠ MeCab library check failed: {e}")
 
-# Test 4: MeloTTS import
+# Test 4: cuDNN system library check
+if cudnn_lib:
+    print(f"✓ System cuDNN library found: {cudnn_lib}")
+else:
+    print("ℹ System cuDNN library not found (PyTorch uses bundled cuDNN)")
+
+# Test 5: MeloTTS import
 try:
     from melo.api import TTS
     print("✓ MeloTTS import successful")
@@ -377,17 +568,56 @@ echo ""
 
 # 16. Create systemd service (optional)
 print_info "Creating systemd service for automatic startup..."
-cat > /tmp/v2vbot.service << EOF
+if command -v systemctl &> /dev/null; then
+    # Check for SSL certificates
+    SSL_CERT="$APP_DIR/ssl/cert.pem"
+    SSL_KEY="$APP_DIR/ssl/key.pem"
+    SSL_ARGS=""
+    
+    if [ -f "$SSL_CERT" ] && [ -f "$SSL_KEY" ]; then
+        SSL_ARGS="--ssl-keyfile $SSL_KEY --ssl-certfile $SSL_CERT"
+        print_info "SSL certificates found - HTTPS will be enabled in systemd service"
+    else
+        print_info "SSL certificates not found - HTTP will be used (HTTPS required for microphone access)"
+    fi
+    
+    # Build LD_LIBRARY_PATH for systemd service
+    LD_LIBRARY_PATH_VAR="$APP_DIR/venv/lib"
+    
+    # Add cuDNN path if available
+    CUDNN_LIB=$(find /usr/lib/x86_64-linux-gnu /usr/local/cuda*/lib64 -name "libcudnn*.so*" 2>/dev/null | head -n 1)
+    if [ -n "$CUDNN_LIB" ]; then
+        CUDNN_DIR=$(dirname "$CUDNN_LIB")
+        LD_LIBRARY_PATH_VAR="${CUDNN_DIR}:${LD_LIBRARY_PATH_VAR}"
+    fi
+    
+    # Add CUDA paths
+    if [ -d "/usr/local/cuda/lib64" ]; then
+        LD_LIBRARY_PATH_VAR="/usr/local/cuda/lib64:${LD_LIBRARY_PATH_VAR}"
+    fi
+    
+    # Add MeCab path if available
+    MECAB_LIB=$(find /usr/lib /usr/local/lib -name "libmecab.so.2*" 2>/dev/null | head -n 1)
+    if [ -n "$MECAB_LIB" ]; then
+        MECAB_DIR=$(dirname "$MECAB_LIB")
+        LD_LIBRARY_PATH_VAR="${MECAB_DIR}:${LD_LIBRARY_PATH_VAR}"
+    fi
+    
+    # Add standard library paths
+    LD_LIBRARY_PATH_VAR="/usr/lib/x86_64-linux-gnu:/usr/local/lib:/usr/lib:${LD_LIBRARY_PATH_VAR}"
+    
+    cat > /tmp/v2vbot.service << EOF
 [Unit]
 Description=V2VBot Voice-to-Voice AI Service
 After=network.target
 
 [Service]
 Type=simple
-User=root
+User=${SUDO_USER:-root}
 WorkingDirectory=$APP_DIR
 Environment="PATH=$APP_DIR/venv/bin:/usr/local/bin:/usr/bin:/bin"
-ExecStart=$APP_DIR/venv/bin/python -m uvicorn server.app.main:app --host 0.0.0.0 --port 8080 --workers 1
+Environment="LD_LIBRARY_PATH=${LD_LIBRARY_PATH_VAR}"
+ExecStart=$APP_DIR/venv/bin/python -m uvicorn server.app.main:app --host 0.0.0.0 --port 8080 --workers 1 $SSL_ARGS
 Restart=always
 RestartSec=10
 StandardOutput=append:$APP_DIR/logs/server.log
@@ -397,9 +627,12 @@ StandardError=append:$APP_DIR/logs/server.log
 WantedBy=multi-user.target
 EOF
 
-mv /tmp/v2vbot.service /etc/systemd/system/v2vbot.service
-systemctl daemon-reload
-print_success "Systemd service created"
+    $SUDO_CMD mv /tmp/v2vbot.service /etc/systemd/system/v2vbot.service
+    $SUDO_CMD systemctl daemon-reload
+    print_success "Systemd service created with proper library paths"
+else
+    print_info "systemctl not available, skipping systemd service creation"
+fi
 echo ""
 
 # 17. Final information
@@ -428,7 +661,16 @@ echo "   # Or if using systemd:"
 echo "   sudo journalctl -u v2vbot -f"
 echo ""
 echo "4. Access your application:"
-echo "   Check your RunPod dashboard for the public URL"
+SSL_CERT_CHECK="$APP_DIR/ssl/cert.pem"
+SSL_KEY_CHECK="$APP_DIR/ssl/key.pem"
+if [ -f "$SSL_CERT_CHECK" ] && [ -f "$SSL_KEY_CHECK" ]; then
+    echo "   Server will use HTTPS (SSL certificates found)"
+    echo "   Access at: https://<your-ip>:8080"
+else
+    echo "   Server will use HTTP"
+    echo "   Note: HTTPS is required for microphone access"
+    echo "   Access at: http://<your-ip>:8080"
+fi
 echo "   Port: 8080"
 echo ""
 echo "📊 Useful Commands:"

@@ -19,6 +19,13 @@ class AudioPipeline:
 	def __init__(self, dc_send: Callable[[str], None]):
 		# Re-enable VAD with fallback to energy-based detection if model not available
 		model_path = os.getenv("SILERO_VAD_ONNX", "models/silero_vad.onnx")
+		# Resolve absolute path to ensure model is found
+		if not os.path.isabs(model_path):
+			# Get the directory of this file and resolve relative to project root
+			import sys
+			project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+			model_path = os.path.join(project_root, model_path)
+		logger.info(f"Initializing AudioPipeline with VAD model: {model_path}")
 		# VAD settings - reduced end_ms for faster turn detection (lower latency)
 		vad_end_ms = int(os.getenv("VAD_END_MS", "1000"))  # Default 1000ms for real-time conversation
 		self.vad = SileroVAD(model_path=model_path, threshold=0.3, window_ms=20, end_ms=vad_end_ms)
@@ -28,6 +35,7 @@ class AudioPipeline:
 		whisper_model = os.getenv("WHISPER_MODEL", "small.en")
 		use_gpu = os.getenv("USE_GPU", "false").lower() in ("true", "1", "yes")
 		whisper_device = None if use_gpu else "cpu"  # None = auto-detect, "cpu" = force CPU
+		logger.info(f"[STT] Initializing Whisper with USE_GPU={use_gpu}, device={whisper_device}, model={whisper_model}")
 		self.whisper = WhisperFaster(model_size=whisper_model, device=whisper_device, compute_type=None)
 		
 		# Initialize Gemini LLM
@@ -59,7 +67,7 @@ class AudioPipeline:
 		self.last_utterance_text = ""  # Keep last transcription for turn_complete
 		self.tts_interrupted = False  # Flag to interrupt ongoing TTS
 		
-		print(f"AudioPipeline initialized: Sequential mode with LLM and TTS integration")
+		logger.info(f"AudioPipeline initialized: Sequential mode with LLM and TTS integration, VAD ready: {self.vad.is_ready()}")
 
 	async def _interrupt_tts(self) -> None:
 		"""
@@ -83,6 +91,11 @@ class AudioPipeline:
 		"""
 		frame_start = time.time()
 		self.frame_count += 1
+		
+		# Log first few frames for debugging
+		if self.frame_count <= 5:
+			audio_energy = float(np.mean(np.abs(audio_16k)))
+			logger.info(f"Audio frame {self.frame_count}: {len(audio_16k)} samples, energy={audio_energy:.6f}")
 		
 		# Process with VAD (expects 16kHz)
 		# Returns: started=bool, ended="utterance_end"|"turn_end"|None

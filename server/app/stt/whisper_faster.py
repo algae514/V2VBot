@@ -25,9 +25,11 @@ class WhisperFaster:
 		# Auto-detect GPU availability
 		if device is None:
 			self.device = "cuda" if torch.cuda.is_available() else "cpu"
+			logger.info(f"[STT] Auto-detected device: {self.device}")
 			print(f"Auto-detected device: {self.device}")
 		else:
 			self.device = device
+			logger.info(f"[STT] Device explicitly set to: {self.device}")
 		
 		# Auto-select compute type based on device
 		if compute_type is None:
@@ -37,6 +39,7 @@ class WhisperFaster:
 			else:
 				# Use int8 for CPU for efficiency
 				self.compute_type = "int8"
+			logger.info(f"[STT] Auto-selected compute type: {self.compute_type}")
 			print(f"Auto-selected compute type: {self.compute_type}")
 		else:
 			self.compute_type = compute_type
@@ -47,13 +50,17 @@ class WhisperFaster:
 	def _load_model(self) -> None:
 		"""Load the Faster Whisper model with GPU support."""
 		try:
+			logger.info(f"[STT] Loading Whisper model: {self.model_size} on {self.device} with {self.compute_type}")
 			print(f"Loading Whisper model: {self.model_size} on {self.device} with {self.compute_type}")
 			
 			# Show GPU info if available
 			if self.device == "cuda" and torch.cuda.is_available():
 				gpu_name = torch.cuda.get_device_name(0)
 				gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1024**3
+				logger.info(f"[STT] GPU detected: {gpu_name} ({gpu_memory:.2f} GB)")
 				print(f"GPU detected: {gpu_name} ({gpu_memory:.2f} GB)")
+			elif self.device == "cpu":
+				logger.info(f"[STT] Using CPU for Whisper model")
 			
 			self.model = WhisperModel(
 				self.model_size,
@@ -62,6 +69,7 @@ class WhisperFaster:
 				# Enable GPU optimizations
 				num_workers=1 if self.device == "cuda" else 4
 			)
+			logger.info(f"[STT] Whisper model ready on {self.device}")
 			print(f"✓ Whisper model ready on {self.device}")
 		except Exception as e:
 			print(f"Failed to load Whisper model: {e}")
