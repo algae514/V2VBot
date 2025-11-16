@@ -50,16 +50,19 @@ class AudioPipeline:
 		try:
 			# Device will be auto-detected based on USE_GPU env var
 			self.tts = MeloTTS(device=None, language="EN")
+			# Semaphore to serialize TTS synthesis (prevent PyTorch race conditions)
+			self.tts_semaphore = asyncio.Semaphore(1)  # Only 1 synthesis at a time
 			# Don't set to None if not ready yet - initialization is async and will complete later
 			if self.tts.is_ready():
 				device = self.tts.get_device()
-				print(f"TTS enabled: Local MeloTTS on {device}")
+				print(f"TTS enabled: Local MeloTTS on {device} (serialized synthesis)")
 			else:
 				print(f"TTS initialized but not ready yet (async initialization in progress, device: {os.getenv('USE_GPU', 'auto-detect')})")
 				# Keep self.tts - it will become ready after async initialization completes
 		except Exception as e:
 			print(f"TTS disabled: {e}")
 			self.tts = None
+			self.tts_semaphore = None
 		
 		self.buffer_audio: list[np.ndarray] = []  # Buffer 16kHz audio for Whisper
 		self.dc_send = dc_send
@@ -434,8 +437,8 @@ class AudioPipeline:
 					async with send_lock:
 						import base64
 						remaining_sent = 0
-						print(f"[TTS] 🔍 Final check: next_sentence_to_send={next_sentence_to_send[0]}, total_sentences={total_sentences[0]}, ordered_results keys={list(ordered_results.keys())}")
-						logger.info(f"[TTS] Final check: next={next_sentence_to_send[0]}, total={total_sentences[0]}, remaining_keys={list(ordered_results.keys())}")
+						print(f"[TTS] 🔍 Final check: next_sentence_to_send={next_sentence_to_send[0]}, total_sentences={total_sentences[0]}, ordered_results keys={list(ordered_results.keys())}, failed={list(failed_sentences)}")
+						logger.info(f"[TTS] Final check: next={next_sentence_to_send[0]}, total={total_sentences[0]}, remaining_keys={list(ordered_results.keys())}, failed={list(failed_sentences)}")
 						while next_sentence_to_send[0] < total_sentences[0]:
 							idx = next_sentence_to_send[0]
 							if idx in ordered_results:
@@ -443,20 +446,22 @@ class AudioPipeline:
 								sentence_audio = np.clip(audio, -1.0, 1.0)
 								audio_bytes = (sentence_audio * 32767).astype(np.int16).tobytes()
 								audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
-								self.dc_send(f'{{"event":"tts_chunk","sequence":0,"audio":"{audio_b64}","sample_rate":{self.tts.get_sample_rate()}}}')
+								# FIXED: Use correct sequence number idx instead of hardcoded 0
+								self.dc_send(f'{{"event":"tts_chunk","sequence":{idx},"audio":"{audio_b64}","sample_rate":{self.tts.get_sample_rate()}}}')
 								del ordered_results[idx]
 								next_sentence_to_send[0] += 1
 								remaining_sent += 1
 								await asyncio.sleep(0.01)  # Delay between sentences
-								print(f"[TTS] ✅ Sent remaining sentence {idx} (total remaining: {remaining_sent})")
-								logger.info(f"[TTS] Sent remaining sentence {idx}")
+								print(f"[TTS] ✅ Sent remaining sentence {idx} from final check: '{sent[:30]}...' (total remaining: {remaining_sent})")
+								logger.info(f"[TTS] Sent remaining sentence {idx} from final check")
 							elif idx in failed_sentences:
 								print(f"[TTS] ⏭️  Skipping failed sentence {idx} in final check")
+								logger.warning(f"[TTS] Skipping failed sentence {idx}")
 								next_sentence_to_send[0] += 1
 							else:
-								# Missing sentence - skip it
-								print(f"[TTS] ⚠️  Sentence {idx} missing in final check, skipping")
-								logger.warning(f"[TTS] Sentence {idx} was never synthesized, skipping in final check")
+								# Missing sentence - this should not happen! Log loudly.
+								print(f"[TTS] ⚠️ ⚠️ ⚠️  WARNING: Sentence {idx} MISSING in final check (not in ordered_results or failed_sentences)!")
+								logger.error(f"[TTS] CRITICAL: Sentence {idx} was never synthesized and not marked as failed! This means audio was lost.")
 								next_sentence_to_send[0] += 1
 						
 						if remaining_sent > 0:
@@ -532,19 +537,19 @@ class AudioPipeline:
 				logger.warning(msg)
 				return
 			
-			# Synthesize the single sentence
+			# Synthesize the single sentence using semaphore to prevent race conditions
 			sentence_to_synth = sentence_stripped
 			msg = f"[TTS] 🔄 Starting synthesis for: '{sentence_to_synth[:50]}{'...' if len(sentence_to_synth) > 50 else ''}'"
 			print(msg)
 			logger.info(f"[TTS] Starting synthesis for sentence: {len(sentence_to_synth)} chars")
 			sentence_start = time.time()
-			try:
+			
+			# Use semaphore to prevent concurrent synthesis (fixes PyTorch meta tensor errors)
+			async with self.tts_semaphore:
 				audio_data = await self.tts._synthesize_text(sentence_to_synth, speed=1.0)
-				logger.info(f"[TTS] _synthesize_text completed successfully")
-			except Exception as synth_error:
-				logger.error(f"[TTS] _synthesize_text failed: {synth_error}", exc_info=True)
-				raise
+			
 			synthesis_time = (time.time() - sentence_start) * 1000
+			logger.info(f"[TTS] Synthesis completed in {synthesis_time:.2f}ms")
 			
 			if self.tts_interrupted:
 				print(f"[TTS] ⏸️  Synthesis interrupted after completion")
@@ -556,6 +561,8 @@ class AudioPipeline:
 			
 			# Store result in ordered dictionary
 			ordered_results[sentence_index] = (sentence, audio_data, synthesis_time, duration)
+			print(f"[TTS] 📥 Stored sentence {sentence_index} in ordered_results (total stored: {len(ordered_results)})")
+			logger.info(f"[TTS] Stored sentence {sentence_index}, ordered_results size: {len(ordered_results)}, next_to_send: {next_sentence_to_send[0]}")
 			
 			# Send sentences in order (send all consecutive sentences starting from next_sentence_to_send)
 			# Use lock to ensure thread-safe ordered sending and prevent parallel playback
