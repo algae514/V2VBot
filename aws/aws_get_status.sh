@@ -23,7 +23,7 @@ echo ""
 FOUND_INSTANCES=0
 INSTANCE_FOUND=false
 FOUND_REGION="ap-south-1"
-FOUND_INSTANCE_ID="i-031e4e0528f5e5ffe"
+FOUND_INSTANCE_ID="i-04428b7e8ab12fd42"
 
 # Search all regions
 for region in "${REGIONS[@]}"; do
@@ -85,7 +85,7 @@ fi
 
 # Get detailed info for the first found instance
 REGION="ap-south-1"
-INSTANCE_ID="i-031e4e0528f5e5ffe"
+INSTANCE_ID="i-04428b7e8ab12fd42"
 
 DETAILS=$(aws ec2 describe-instances \
     --region $REGION \

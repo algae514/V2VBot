@@ -193,6 +193,75 @@ This refreshes every 5 seconds to show current status.
 
 **Pro Tip**: Bookmark the EC2 console link for your primary region for quick access!
 
+## One-Time Spot Instance Issue: Cannot Stop
+
+### Problem
+
+If you see this error when trying to stop a spot instance:
+```
+You can't stop the Spot Instance 'i-xxxxx' because it is associated with a one-time Spot Instance request. 
+You can only stop Spot Instances associated with persistent Spot Instance requests.
+```
+
+This means your instance was created with a **one-time spot request**, which cannot be stopped—only terminated.
+
+### Solution: Create an AMI (Amazon Machine Image)
+
+**Before terminating**, create an AMI to preserve all your work:
+
+```bash
+# Create AMI from your current instance
+./aws/aws_create_ami.sh
+```
+
+This will:
+- ✅ Create a complete snapshot of your instance (all data, configurations, installed software)
+- ✅ Take 5-15 minutes (instance continues running during this)
+- ✅ Save everything to an AMI you can use later
+
+**After AMI is created:**
+
+1. **Wait for AMI to be "available"** (check status):
+   ```bash
+   aws ec2 describe-images --region ap-south-1 --owners self --query 'Images[*].[ImageId,Name,State]' --output table
+   ```
+
+2. **Terminate the old instance** (once AMI is available):
+   ```bash
+   ./aws/aws_delete_instance.sh
+   ```
+
+3. **Create new instance from AMI** (when you need it again):
+   ```bash
+   ./aws/aws_create_instance_from_ami.sh <AMI_ID>
+   ```
+
+### Future Instances
+
+The `aws_create_instance.sh` script has been updated to use **persistent spot requests** for new instances, which allows stopping/starting without losing data.
+
+**Key Differences:**
+
+| Type | Can Stop? | Can Terminate? | Cost Savings |
+|------|-----------|----------------|--------------|
+| **One-time spot** | ❌ No | ✅ Yes | 60-90% cheaper |
+| **Persistent spot** | ✅ Yes | ✅ Yes | 60-90% cheaper |
+| **On-demand** | ✅ Yes | ✅ Yes | Full price |
+
+### AMI Management
+
+**List your AMIs:**
+```bash
+aws ec2 describe-images --region ap-south-1 --owners self --query 'Images[*].[ImageId,Name,CreationDate]' --output table
+```
+
+**Delete old AMIs** (to save costs):
+```bash
+aws ec2 deregister-image --region ap-south-1 --image-id ami-xxxxx
+```
+
+**Cost:** AMI storage costs ~₹0.20-0.50/month per GB (similar to EBS snapshots). A 30GB AMI costs ~₹6-15/month.
+
 
 
 

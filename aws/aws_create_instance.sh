@@ -1,6 +1,10 @@
 #!/bin/bash
 # Create AWS EC2 instance with GPU for V2VBot - ROBUST VERSION
 # Tries multiple regions, instance types, and spot instances to find availability
+#
+# To use a custom AMI (e.g., from a backup), use:
+#   ./aws/aws_create_instance_from_ami.sh
+# Or set CUSTOM_AMI_ID below to use your saved AMI instead of fresh Ubuntu
 
 set -e
 
@@ -9,6 +13,11 @@ KEY_NAME="v2vbot-key"  # You'll need to create this or use existing key
 SECURITY_GROUP="v2vbot-sg"
 DISK_SIZE=30
 IMAGE_ID=""  # Will be set based on region (Ubuntu 22.04 LTS)
+
+# Optional: Set this to use your saved AMI instead of creating fresh Ubuntu instance
+# Example: CUSTOM_AMI_ID="ami-068fbb4aeefb15ebc"
+# Note: For using saved AMIs, it's recommended to use: ./aws/aws_create_instance_from_ami.sh
+CUSTOM_AMI_ID=""
 
 # Startup script for all instances
 USER_DATA='#!/bin/bash
@@ -401,7 +410,7 @@ for instance_pricing in "${INSTANCE_TYPES[@]}"; do
             # Try to create instance
             echo "    Submitting instance creation request..."
             if [ "$instance_pricing" = "spot" ]; then
-                # Spot instance
+                # Spot instance - using "persistent" to allow stopping/starting
                 RESULT=$(aws ec2 run-instances \
                     --region $region \
                     --image-id $IMAGE_ID \
@@ -410,7 +419,7 @@ for instance_pricing in "${INSTANCE_TYPES[@]}"; do
                     --security-group-ids $SG_ID \
                     --block-device-mappings "$BLOCK_DEVICE" \
                     --user-data "$USER_DATA_B64" \
-                    --instance-market-options '{"MarketType":"spot","SpotOptions":{"SpotInstanceType":"one-time","InstanceInterruptionBehavior":"terminate"}}' \
+                    --instance-market-options '{"MarketType":"spot","SpotOptions":{"SpotInstanceType":"persistent","InstanceInterruptionBehavior":"stop"}}' \
                     --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$INSTANCE_NAME}]" \
                     --query 'Instances[0].[InstanceId,State.Name,Placement.AvailabilityZone]' \
                     --output text 2>&1)
